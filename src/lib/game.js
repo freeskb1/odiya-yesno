@@ -26,15 +26,24 @@ export function getThirdLevelIndex(answers) {
   return idx;
 }
 
-// 도착지 (3층 답변 후)
+// 도착지 - 6개 (3층 카드 인덱스 + YES/NO)
+// 형식: "0Y", "0N", "1Y", "1N", "2Y", "2N"
 export function getDestination(answers) {
   if (answers.length < 3) return null;
   const thirdIdx = getThirdLevelIndex(answers.slice(0, 2));
   const thirdAns = answers[2].answer;
+  return `${thirdIdx}${thirdAns === "YES" ? "Y" : "N"}`;
+}
 
-  if (thirdIdx === 0) return thirdAns === "YES" ? "A" : "B";
-  if (thirdIdx === 1) return thirdAns === "YES" ? "A" : "C";
-  return thirdAns === "YES" ? "B" : "C";
+// 가능한 모든 도착지 6개 (UI에서 투표 옵션으로 사용)
+export const ALL_DESTINATIONS = ["0Y", "0N", "1Y", "1N", "2Y", "2N"];
+
+// 도착지를 사람이 읽을 수 있는 형태로
+export function describeDestination(dest, pyramid) {
+  if (!dest || !pyramid) return "";
+  const idx = parseInt(dest[0], 10);
+  const yn = dest[1] === "Y" ? "YES" : "NO";
+  return `${pyramid.level3[idx]} → ${yn}`;
 }
 
 // 현재 답변할 차례의 카드
@@ -70,8 +79,6 @@ export function buildLeadPlayerOrder(playerIds) {
 }
 
 // "나를 가장 잘 맞춘 사람" 계산
-// myLeadRounds: 내가 선 플레이어였던 라운드 번호들
-// allVotes: { playerId, round, isCorrect }
 export function calculateSoulmate(myPlayerId, myLeadRounds, allVotes) {
   if (myLeadRounds.length === 0) {
     return { soulmateIds: [], correctCount: 0, totalCount: 0 };

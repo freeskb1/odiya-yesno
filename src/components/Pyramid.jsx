@@ -1,14 +1,18 @@
 import { Card } from "./Card";
 import { getCurrentQuestion, getThirdLevelIndex } from "../lib/game";
-import { colors } from "../lib/theme";
 
 export default function Pyramid({ pyramid, mode, onCardTap }) {
   const answers = pyramid.answers || [];
   const currentQ = getCurrentQuestion(pyramid);
 
-  const passedLevel1 = answers.length >= 1;
-  const passedLevel2Idx = answers.length >= 2 ? (answers[0].answer === "YES" ? 0 : 1) : -1;
-  const passedLevel3Idx = answers.length >= 3 ? getThirdLevelIndex(answers.slice(0, 2)) : -1;
+  // 현재 어느 2층/3층 카드를 향해 가고 있는지 (answers 길이에 따라)
+  // answers.length === 0: 1층 답변 전 - 2층/3층 모두 disabled
+  // answers.length === 1: 1층 답변 완료 - 2층 한쪽이 current
+  // answers.length === 2: 2층까지 답변 - 3층 하나가 current
+  // answers.length === 3: 모두 답변 완료
+
+  const currentLevel2Idx = answers.length >= 1 ? (answers[0].answer === "YES" ? 0 : 1) : -1;
+  const currentLevel3Idx = answers.length >= 2 ? getThirdLevelIndex(answers.slice(0, 2)) : -1;
 
   function getCardVariant(level, idx) {
     if (mode === "voting") return "active";
@@ -16,33 +20,27 @@ export default function Pyramid({ pyramid, mode, onCardTap }) {
     const isCurrent = currentQ?.level === level && currentQ.cardIndex === idx;
 
     if (level === 1) {
-      if (passedLevel1) return "passed";
+      if (answers.length >= 1) return "passed";
       if (isCurrent) return mode === "answering-lead" ? "current" : "disabled";
       return "disabled";
     }
     if (level === 2) {
       if (answers.length === 0) return "disabled";
-      if (answers.length === 1) {
-        if (idx === passedLevel2Idx) return mode === "answering-lead" ? "current" : "disabled";
-        return "disabled";
-      }
-      if (idx === passedLevel2Idx) return "passed";
-      return "disabled";
+      if (idx !== currentLevel2Idx) return "disabled"; // 다른 분기는 비활성
+      if (answers.length === 1) return mode === "answering-lead" ? "current" : "disabled";
+      return "passed"; // answers.length >= 2
     }
     // level 3
     if (answers.length < 2) return "disabled";
-    if (answers.length === 2) {
-      if (idx === passedLevel3Idx) return mode === "answering-lead" ? "current" : "disabled";
-      return "disabled";
-    }
-    if (idx === passedLevel3Idx) return "passed";
-    return "disabled";
+    if (idx !== currentLevel3Idx) return "disabled";
+    if (answers.length === 2) return mode === "answering-lead" ? "current" : "disabled";
+    return "passed"; // answers.length >= 3
   }
 
   function getPassedAnswer(level, idx) {
     if (level === 1 && answers.length >= 1) return answers[0].answer;
-    if (level === 2 && answers.length >= 2 && idx === passedLevel2Idx) return answers[1].answer;
-    if (level === 3 && answers.length >= 3 && idx === passedLevel3Idx) return answers[2].answer;
+    if (level === 2 && answers.length >= 2 && idx === currentLevel2Idx) return answers[1].answer;
+    if (level === 3 && answers.length >= 3 && idx === currentLevel3Idx) return answers[2].answer;
     return undefined;
   }
 
@@ -97,23 +95,6 @@ export default function Pyramid({ pyramid, mode, onCardTap }) {
             onClick={() => handleTap(3, i, q)}
           />
         ))}
-      </div>
-
-      {/* 화살표 */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr 1fr",
-          gap: 4,
-          marginBottom: 4,
-          fontSize: 10,
-          color: colors.text3,
-          textAlign: "center",
-        }}
-      >
-        <div>↓</div>
-        <div>↓</div>
-        <div>↓</div>
       </div>
     </div>
   );
