@@ -1,0 +1,17 @@
+{
+  "rules": {
+    "rooms": {
+      ".read": "auth != null",
+      "$code": {
+        ".write": "auth != null",
+        ".validate": "$code.matches(/^[0-9]{3}$/)",
+
+        "players": {
+          "$playerId": {
+            ".write": "auth != null && (!data.exists() || data.child('isHost').val() === true || $playerId === auth.uid)"
+          }
+        }
+      }
+    }
+  }
+}

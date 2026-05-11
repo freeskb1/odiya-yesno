@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <meta name="theme-color" content="#FAFAFA" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+    <title>오디야 - YES or NO 추리 파티 게임</title>
+    <style>
+      * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+      html, body, #root { margin: 0; padding: 0; height: 100%; }
+      body {
+        background: #FAFAFA;
+        color: #0A0A0A;
+        font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, "Roboto", sans-serif;
+        -webkit-font-smoothing: antialiased;
+        overscroll-behavior-y: contain;
+      }
+      input, select, textarea, button { font-family: inherit; }
+      input { font-size: 16px; } /* iOS 줌 방지 */
+      button { cursor: pointer; border: none; background: none; padding: 0; color: inherit; }
+      input[type=number]::-webkit-inner-spin-button,
+      input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+      ::-webkit-scrollbar { width: 6px; height: 6px; }
+      ::-webkit-scrollbar-thumb { background: #C4C4C4; border-radius: 100px; }
+
+      /* 애니메이션 */
+      @keyframes shake {
+        0%, 100% { transform: translateX(0); }
+        25% { transform: translateX(-4px); }
+        75% { transform: translateX(4px); }
+      }
+      @keyframes popIn {
+        from { transform: scale(0.85); opacity: 0; }
+        to { transform: scale(1); opacity: 1; }
+      }
+      @keyframes pulseRing {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(29, 158, 117, 0.45); }
+        50% { box-shadow: 0 0 0 6px rgba(29, 158, 117, 0); }
+      }
+      @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+      @keyframes dotPulse {
+        0%, 100% { opacity: 0.3; }
+        50% { opacity: 1; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
