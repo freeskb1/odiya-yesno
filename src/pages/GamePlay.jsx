@@ -1,18 +1,27 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { submitVote, submitAnswer, revealResult, nextRound, leaveRoom } from "../lib/room";
-import { calculateSoulmate, describeDestination } from "../lib/game";
+import {
+  calculateSoulmate,
+  getDestination,
+  getCardIndexAtLevel,
+  getAnswerSequence,
+} from "../lib/game";
 import { clearPlayer } from "../lib/storage";
 import Avatar from "../components/Avatar";
 import Pyramid from "../components/Pyramid";
-import VoteBoxes from "../components/VoteBoxes";
-import { CardPopup } from "../components/Card";
-import { colors, radius, containerStyle } from "../lib/theme";
+import StepPopup from "../components/StepPopup";
+import AnswerSequence from "../components/AnswerSequence";
+import { colors, radius, shadow, containerStyle } from "../lib/theme";
 
 export default function GamePlay({ room, code, myPlayerId }) {
   const navigate = useNavigate();
   const [phase, setPhase] = useState("intro");
-  const [popup, setPopup] = useState({ open: false, level: 1, text: "", isCurrent: false });
+
+  // 투표자가 단계별로 입력한 답변들 (로컬 상태, 확정 시에 destination으로 변환)
+  // 형식: [{ level, question, answer }]
+  const [myStepAnswers, setMyStepAnswers] = useState([]);
+  const [voteSubmitting, setVoteSubmitting] = useState(false);
 
   const players = useMemo(() => {
     return Object.entries(room.players || {})
@@ -23,6 +32,7 @@ export default function GamePlay({ room, code, myPlayerId }) {
   const me = players.find((p) => p.id === myPlayerId);
   const leadPlayer = players.find((p) => p.id === room.currentLeadPlayerId);
   const isLead = room.currentLeadPlayerId === myPlayerId;
+  const depth = room.depth || room.pyramid?.depth || 3;
 
   const currentVotes = useMemo(() => {
     const v = (room.votes || {})[room.currentRound] || {};
@@ -55,62 +65,123 @@ export default function GamePlay({ room, code, myPlayerId }) {
   const nonLeadCount = players.length - 1;
   const submittedVotesCount = currentVotes.length;
 
-  // Phase 전환
+  // ============ Phase 전환 ============
   useEffect(() => {
     if (room.status === "finished") setPhase("final");
   }, [room.status]);
 
+  // 라운드 변경 시 → intro → 다음 단계
   useEffect(() => {
     if (room.status !== "playing") return;
     setPhase("intro");
+    setMyStepAnswers([]); // 라운드마다 초기화
+
     const t = setTimeout(() => {
       const answersLen = (room.pyramid?.answers || []).length;
-      if (answersLen > 0) setPhase("answering");
-      else setPhase(isLead ? "lead-waiting" : "voting");
+      if (answersLen > 0) {
+        setPhase("answering");
+      } else {
+        setPhase(isLead ? "lead-answering" : "voting-popup");
+      }
     }, 2500);
     return () => clearTimeout(t);
   }, [room.currentRound, room.status]); // eslint-disable-line
 
+  // 모든 투표 완료 시 → answering
   useEffect(() => {
     if (room.status !== "playing") return;
     if (
-      (phase === "voting" || phase === "lead-waiting") &&
+      (phase === "voting-popup" || phase === "voting-confirm" || phase === "lead-waiting") &&
       submittedVotesCount >= nonLeadCount &&
-      nonLeadCount > 0
+      nonLeadCount > 0 &&
+      isLead
     ) {
+      setPhase("lead-answering");
+    }
+    if (
+      (phase === "voting-popup" || phase === "voting-confirm") &&
+      myVote &&
+      submittedVotesCount >= nonLeadCount &&
+      nonLeadCount > 0 &&
+      !isLead
+    ) {
+      // 본인은 이미 투표했고, 다른 투표자들도 모두 완료
+      // → 선 플레이어 답변 시청 모드
       setPhase("answering");
     }
-  }, [submittedVotesCount, nonLeadCount, phase, room.status]);
+  }, [submittedVotesCount, nonLeadCount, phase, room.status, isLead, myVote]);
 
+  // 본인 투표 완료 후, 다른 사람 기다리기
+  useEffect(() => {
+    if (myVote && phase === "voting-confirm" && !isLead) {
+      setPhase("voted-waiting");
+    }
+  }, [myVote, phase, isLead]);
+
+  // 선 플레이어 답변 진행 중 watching
   const answersLen = (room.pyramid?.answers || []).length;
   useEffect(() => {
     if (
-      answersLen === 3 &&
-      (phase === "answering" || phase === "voting" || phase === "lead-waiting")
+      !isLead &&
+      myVote &&
+      answersLen > 0 &&
+      (phase === "voted-waiting" || phase === "voting-popup")
+    ) {
+      setPhase("answering"); // 시청 모드
+    }
+  }, [answersLen, phase, isLead, myVote]);
+
+  // depth 답변 완료 → result
+  useEffect(() => {
+    if (
+      answersLen === depth &&
+      (phase === "answering" ||
+        phase === "lead-answering" ||
+        phase === "voted-waiting" ||
+        phase === "voting-popup")
     ) {
       setPhase("result");
     }
-  }, [answersLen, phase]);
+  }, [answersLen, depth, phase]);
 
+  // revealed → reveal
   useEffect(() => {
     if (currentResult?.revealed && phase === "result") {
       setPhase("reveal");
     }
   }, [currentResult?.revealed, phase]);
 
-  // 액션
-  async function handleVote(option) {
-    if (myVote || isLead) return;
-    await submitVote(code, room.currentRound, myPlayerId, option);
+  // ============ 액션 ============
+
+  // 투표자 단계별 답변
+  function handleVoteStep(answer) {
+    const nextLevel = myStepAnswers.length + 1;
+    if (nextLevel > depth) return;
+    const cardIdx = getCardIndexAtLevel(myStepAnswers, nextLevel);
+    const question = room.pyramid.levels[nextLevel - 1][cardIdx];
+    const newAnswers = [
+      ...myStepAnswers,
+      { level: nextLevel, question, answer },
+    ];
+    setMyStepAnswers(newAnswers);
+    if (newAnswers.length === depth) {
+      setPhase("voting-confirm"); // 최종 확인 화면으로
+    }
   }
 
-  function handleCardTap(level, text, isCurrent) {
-    setPopup({ open: true, level, text, isCurrent });
+  // 투표 확정
+  async function handleVoteConfirm() {
+    if (voteSubmitting) return;
+    const dest = getDestination(myStepAnswers);
+    if (!dest) return;
+    setVoteSubmitting(true);
+    await submitVote(code, room.currentRound, myPlayerId, dest);
+    // myVote 가 채워지면 useEffect 가 voted-waiting 으로 전환
   }
 
-  async function handleAnswer(answer) {
+  // 선 플레이어 답변
+  async function handleLeadAnswer(answer) {
     if (!isLead) return;
-    setPopup({ ...popup, open: false });
     await submitAnswer(code, answer);
   }
 
@@ -128,7 +199,7 @@ export default function GamePlay({ room, code, myPlayerId }) {
     navigate("/");
   }
 
-  // 렌더링
+  // ============ 렌더 ============
   if (phase === "final" || room.status === "finished") {
     return (
       <FinalResult
@@ -143,9 +214,17 @@ export default function GamePlay({ room, code, myPlayerId }) {
   }
 
   if (phase === "intro") {
-    return <RoundIntro round={room.currentRound} totalRounds={room.totalRounds} leadPlayer={leadPlayer} />;
+    return (
+      <RoundIntro
+        round={room.currentRound}
+        totalRounds={room.totalRounds}
+        leadPlayer={leadPlayer}
+        depth={depth}
+      />
+    );
   }
 
+  // 선 플레이어가 다른 투표자를 기다리는 화면
   if (phase === "lead-waiting" && isLead) {
     return (
       <LeadWaitingScreen
@@ -157,48 +236,96 @@ export default function GamePlay({ room, code, myPlayerId }) {
     );
   }
 
-  if (phase === "voting" && !isLead) {
+  // 투표자: 단계별 팝업으로 답변 중
+  if (phase === "voting-popup" && !isLead) {
+    const nextLevel = myStepAnswers.length + 1;
+    const cardIdx = getCardIndexAtLevel(myStepAnswers, nextLevel);
+    const question = room.pyramid.levels[nextLevel - 1][cardIdx];
     return (
       <>
-        <VotingView
-          room={room}
-          leadPlayer={leadPlayer}
-          myVote={myVote?.vote}
-          totalVoters={nonLeadCount}
-          submittedCount={submittedVotesCount}
-          onVote={handleVote}
-          onCardTap={handleCardTap}
-        />
-        <CardPopup
-          open={popup.open}
-          text={popup.text}
-          level={popup.level}
-          showAnswerButtons={false}
-          onClose={() => setPopup({ ...popup, open: false })}
+        <VotingBackground leadPlayer={leadPlayer} round={room.currentRound} totalRounds={room.totalRounds} />
+        <StepPopup
+          open={true}
+          currentStep={nextLevel}
+          totalSteps={depth}
+          question={question}
+          previousAnswers={myStepAnswers.slice(0, nextLevel - 1)}
+          onAnswer={handleVoteStep}
+          targetName={leadPlayer?.nickname || ""}
+          isLead={false}
         />
       </>
     );
   }
 
-  if (phase === "answering" || (phase === "voting" && isLead) || phase === "lead-waiting") {
+  // 투표자: 최종 확인 화면
+  if (phase === "voting-confirm" && !isLead) {
+    return (
+      <VotingConfirm
+        room={room}
+        leadPlayer={leadPlayer}
+        myAnswers={myStepAnswers}
+        onConfirm={handleVoteConfirm}
+        submitting={voteSubmitting}
+      />
+    );
+  }
+
+  // 투표자: 투표 후 대기
+  if (phase === "voted-waiting" && !isLead) {
+    return (
+      <VotedWaitingScreen
+        round={room.currentRound}
+        totalRounds={room.totalRounds}
+        leadPlayer={leadPlayer}
+        myAnswers={myStepAnswers}
+        votedCount={submittedVotesCount}
+        totalCount={nonLeadCount}
+      />
+    );
+  }
+
+  // 선 플레이어: 단계별 답변 (팝업)
+  if ((phase === "lead-answering" || phase === "voting-popup") && isLead) {
+    // 선 플레이어는 모든 투표 완료 후 답변 시작
+    if (submittedVotesCount < nonLeadCount && nonLeadCount > 0) {
+      return (
+        <LeadWaitingScreen
+          round={room.currentRound}
+          totalRounds={room.totalRounds}
+          votedCount={submittedVotesCount}
+          totalCount={nonLeadCount}
+        />
+      );
+    }
+    // 답변 시작
+    const nextLevel = answersLen + 1;
+    if (nextLevel > depth) {
+      // 답변 완료, 결과 대기
+      return <div style={{ ...containerStyle, justifyContent: "center", alignItems: "center" }}>잠시만요...</div>;
+    }
+    const cardIdx = getCardIndexAtLevel(room.pyramid.answers || [], nextLevel);
+    const question = room.pyramid.levels[nextLevel - 1][cardIdx];
     return (
       <>
-        <AnsweringView
-          room={room}
-          leadPlayer={leadPlayer}
-          isLead={isLead}
-          onCardTap={handleCardTap}
-        />
-        <CardPopup
-          open={popup.open}
-          text={popup.text}
-          level={popup.level}
-          showAnswerButtons={isLead && popup.isCurrent}
-          onAnswer={handleAnswer}
-          onClose={() => setPopup({ ...popup, open: false })}
+        <LeadAnsweringBackground room={room} depth={depth} />
+        <StepPopup
+          open={true}
+          currentStep={nextLevel}
+          totalSteps={depth}
+          question={question}
+          previousAnswers={null}
+          onAnswer={handleLeadAnswer}
+          targetName=""
+          isLead={true}
         />
       </>
     );
+  }
+
+  // 다른 플레이어: 선 플레이어 답변 시청
+  if (phase === "answering" && !isLead) {
+    return <WatchingScreen room={room} leadPlayer={leadPlayer} depth={depth} myAnswers={myStepAnswers} />;
   }
 
   if (phase === "result") {
@@ -207,6 +334,7 @@ export default function GamePlay({ room, code, myPlayerId }) {
         room={room}
         leadPlayer={leadPlayer}
         result={currentResult}
+        depth={depth}
         onNext={handleReveal}
       />
     );
@@ -220,6 +348,7 @@ export default function GamePlay({ room, code, myPlayerId }) {
         leadPlayer={leadPlayer}
         result={currentResult}
         votes={currentVotes}
+        depth={depth}
         isLastRound={room.currentRound >= room.totalRounds}
         onNext={handleNextRound}
       />
@@ -232,14 +361,14 @@ export default function GamePlay({ room, code, myPlayerId }) {
 // ============================================
 // 라운드 인트로
 // ============================================
-function RoundIntro({ round, totalRounds, leadPlayer }) {
+function RoundIntro({ round, totalRounds, leadPlayer, depth }) {
   if (!leadPlayer) return null;
   return (
     <div style={{ ...containerStyle, alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <p style={{ fontSize: 11, color: colors.text3, letterSpacing: 1.2, margin: "0 0 6px" }}>
+      <p style={{ fontSize: 11, color: colors.text3, letterSpacing: 1.2, margin: "0 0 6px", fontWeight: 600 }}>
         ROUND {round} / {totalRounds}
       </p>
-      <p style={{ fontSize: 14, color: colors.text3, margin: "0 0 24px" }}>이번 차례는</p>
+      <p style={{ fontSize: 14, color: colors.text3, margin: "0 0 20px" }}>✨ 이번 차례는</p>
 
       <div
         style={{
@@ -247,38 +376,207 @@ function RoundIntro({ round, totalRounds, leadPlayer }) {
           flexDirection: "column",
           alignItems: "center",
           padding: "28px 36px",
-          borderRadius: radius.lg,
+          borderRadius: radius.xl,
           background: colors.accentBg,
           border: `2px solid ${colors.accentBorder}`,
-          marginBottom: 24,
+          marginBottom: 20,
+          boxShadow: shadow.cardLift,
         }}
       >
         <Avatar nickname={leadPlayer.nickname} size={72} style={{ marginBottom: 12 }} />
-        <div style={{ fontSize: 22, fontWeight: 500, color: colors.accentText, marginBottom: 4 }}>
+        <div style={{ fontSize: 24, fontWeight: 700, color: colors.accentDeep, marginBottom: 4 }}>
           {leadPlayer.nickname}
         </div>
-        <div style={{ fontSize: 12, color: colors.accentText, opacity: 0.8 }}>선 플레이어</div>
+        <div style={{ fontSize: 11, color: colors.accentText, fontWeight: 600 }}>🙈 선 플레이어</div>
       </div>
 
       <p
         style={{
           fontSize: 13,
-          color: colors.text3,
+          color: colors.text2,
           textAlign: "center",
           lineHeight: 1.5,
-          margin: "0 0 24px",
-          maxWidth: 240,
+          margin: "0 0 16px",
+          maxWidth: 260,
         }}
       >
-        {leadPlayer.nickname}이(가) 어떤 답을 할지<br />모두 함께 맞춰봐요
+        {leadPlayer.nickname}이(가) 어떤 답을 할지<br />모두 함께 맞춰봐요 🎯
       </p>
+      <div
+        style={{
+          padding: "6px 12px",
+          borderRadius: 100,
+          background: colors.surface3,
+          fontSize: 11,
+          color: colors.text3,
+          marginBottom: 16,
+        }}
+      >
+        {depth}단계 피라미드
+      </div>
       <div style={{ fontSize: 11, color: colors.text3 }}>잠시 후 시작합니다...</div>
     </div>
   );
 }
 
 // ============================================
-// 선 플레이어 대기 (다크)
+// 공통 헤더 (둥근 라운드 표시)
+// ============================================
+function Header({ round, totalRounds, leadName, mode }) {
+  const isLead = mode === "lead";
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, fontSize: 11, color: colors.text3 }}>
+      <span style={{ fontWeight: 600 }}>Round {round} / {totalRounds}</span>
+      <span style={{ color: isLead ? colors.correctText : colors.accentText, fontWeight: 600 }}>
+        🙈 {isLead ? "내가 선" : `선: ${leadName}`}
+      </span>
+    </div>
+  );
+}
+
+// ============================================
+// 투표자: 팝업 배경 (블러)
+// ============================================
+function VotingBackground({ leadPlayer, round, totalRounds }) {
+  return (
+    <div style={{ ...containerStyle, padding: "14px 12px 16px", justifyContent: "center" }}>
+      <Header round={round} totalRounds={totalRounds} leadName={leadPlayer?.nickname} mode="vote" />
+      <div style={{ textAlign: "center", marginBottom: 14, opacity: 0.4 }}>
+        <p style={{ fontSize: 14, fontWeight: 600, color: colors.text1, margin: 0 }}>
+          {leadPlayer?.nickname}이(가) 어디를 선택할지 맞춰보세요
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ============================================
+// 선 플레이어: 팝업 배경 (피라미드 살짝 보임)
+// ============================================
+function LeadAnsweringBackground({ room, depth }) {
+  return (
+    <div style={{ ...containerStyle, padding: "14px 12px 16px", justifyContent: "center", opacity: 0.4 }}>
+      <Header round={room.currentRound} totalRounds={room.totalRounds} mode="lead" />
+      <div style={{ textAlign: "center", marginBottom: 14 }}>
+        <p style={{ fontSize: 14, fontWeight: 600, color: colors.text1, margin: 0 }}>
+          내가 답할 차례
+        </p>
+      </div>
+      <Pyramid pyramid={room.pyramid} mode="answering-lead" />
+    </div>
+  );
+}
+
+// ============================================
+// 투표자: 최종 확인 화면
+// ============================================
+function VotingConfirm({ room, leadPlayer, myAnswers, onConfirm, submitting }) {
+  if (!room.pyramid || !leadPlayer) return null;
+  // myAnswers를 포함한 가상의 pyramid를 만들어서 피라미드 컴포넌트에 표시
+  const pyramidWithMyPath = {
+    ...room.pyramid,
+    answers: myAnswers,
+  };
+  const sequence = getAnswerSequence(myAnswers);
+
+  return (
+    <div style={{ ...containerStyle, padding: "14px 12px 16px", justifyContent: "center" }}>
+      <Header round={room.currentRound} totalRounds={room.totalRounds} leadName={leadPlayer.nickname} mode="vote" />
+
+      <div style={{ textAlign: "center", marginBottom: 14 }}>
+        <p style={{ fontSize: 13, fontWeight: 700, margin: 0, color: colors.text1 }}>
+          💭 내가 예상한 {leadPlayer.nickname}의 답변
+        </p>
+        <p style={{ fontSize: 10, color: colors.text3, margin: "4px 0 0" }}>
+          아래 경로가 맞다면 확정해주세요
+        </p>
+      </div>
+
+      <Pyramid pyramid={pyramidWithMyPath} mode="final-confirm" myAnswers={myAnswers} />
+
+      <div style={{ marginTop: 14, marginBottom: 14 }}>
+        <AnswerSequence answers={sequence} targetName={leadPlayer.nickname} />
+      </div>
+
+      <button
+        onClick={onConfirm}
+        disabled={submitting}
+        style={{
+          padding: 13,
+          borderRadius: radius.lg,
+          background: `linear-gradient(180deg, ${colors.correctFillLight} 0%, ${colors.correctFill} 100%)`,
+          color: "#FFFFFF",
+          fontSize: 14,
+          fontWeight: 700,
+          border: "none",
+          boxShadow: shadow.button,
+          cursor: submitting ? "default" : "pointer",
+          fontFamily: "inherit",
+          opacity: submitting ? 0.7 : 1,
+        }}
+      >
+        {submitting ? "전송 중..." : "✨ 투표 확정"}
+      </button>
+    </div>
+  );
+}
+
+// ============================================
+// 투표자: 투표 후 대기
+// ============================================
+function VotedWaitingScreen({ round, totalRounds, leadPlayer, myAnswers, votedCount, totalCount }) {
+  const sequence = getAnswerSequence(myAnswers);
+  return (
+    <div style={{ ...containerStyle, padding: "14px 12px 16px", justifyContent: "center", alignItems: "stretch" }}>
+      <Header round={round} totalRounds={totalRounds} leadName={leadPlayer?.nickname} mode="vote" />
+
+      <div style={{ textAlign: "center", marginBottom: 14 }}>
+        <div style={{ fontSize: 36, marginBottom: 8 }}>✅</div>
+        <p style={{ fontSize: 15, fontWeight: 700, margin: 0, color: colors.text1 }}>
+          투표 완료!
+        </p>
+        <p style={{ fontSize: 11, color: colors.text3, margin: "4px 0 0" }}>
+          다른 친구들의 투표를 기다리는 중...
+        </p>
+      </div>
+
+      <div style={{ marginBottom: 14 }}>
+        <AnswerSequence answers={sequence} targetName={leadPlayer?.nickname || ""} hint="결과는 잠시 후 공개됩니다" />
+      </div>
+
+      <div
+        style={{
+          padding: "10px 14px",
+          borderRadius: radius.md,
+          background: colors.surface,
+          border: `1px solid ${colors.border1}`,
+          textAlign: "center",
+        }}
+      >
+        <div style={{ fontSize: 11, color: colors.text3, marginBottom: 6 }}>
+          👥 투표 진행
+        </div>
+        <div style={{ height: 4, borderRadius: 100, background: colors.surface2, overflow: "hidden", marginBottom: 6 }}>
+          <div
+            style={{
+              height: "100%",
+              width: `${totalCount > 0 ? (votedCount / totalCount) * 100 : 0}%`,
+              background: colors.correctFill,
+              borderRadius: 100,
+              transition: "width 0.5s",
+            }}
+          />
+        </div>
+        <div style={{ fontSize: 12, fontWeight: 600, color: colors.text2 }}>
+          {votedCount} / {totalCount}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================
+// 선 플레이어 대기
 // ============================================
 function LeadWaitingScreen({ round, totalRounds, votedCount, totalCount }) {
   const percent = totalCount > 0 ? (votedCount / totalCount) * 100 : 0;
@@ -333,7 +631,7 @@ function LeadWaitingScreen({ round, totalRounds, votedCount, totalCount }) {
         </div>
       </div>
 
-      <p style={{ fontSize: 18, fontWeight: 500, margin: "0 0 8px", textAlign: "center", lineHeight: 1.4 }}>
+      <p style={{ fontSize: 18, fontWeight: 700, margin: "0 0 8px", textAlign: "center", lineHeight: 1.4 }}>
         옆 사람 화면<br />훔쳐보지 마세요!
       </p>
       <p style={{ fontSize: 13, opacity: 0.6, textAlign: "center", lineHeight: 1.5, margin: "0 0 32px", maxWidth: 260 }}>
@@ -343,7 +641,7 @@ function LeadWaitingScreen({ round, totalRounds, votedCount, totalCount }) {
       <div style={{ width: "100%", maxWidth: 220, padding: "14px 16px", borderRadius: radius.md, background: "rgba(255,255,255,0.08)", marginBottom: 24 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
           <span style={{ fontSize: 11, opacity: 0.7 }}>투표 진행</span>
-          <span style={{ fontSize: 11, fontWeight: 500, opacity: 0.95 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, opacity: 0.95 }}>
             {votedCount} / {totalCount}
           </span>
         </div>
@@ -360,243 +658,198 @@ function LeadWaitingScreen({ round, totalRounds, votedCount, totalCount }) {
 }
 
 // ============================================
-// 투표 화면 (일반 플레이어)
+// 투표자: 선 플레이어 답변 시청
 // ============================================
-function VotingView({ room, leadPlayer, myVote, totalVoters, submittedCount, onVote, onCardTap }) {
-  if (!room.pyramid || !leadPlayer) return null;
+function WatchingScreen({ room, leadPlayer, depth, myAnswers }) {
+  const answersLen = (room.pyramid?.answers || []).length;
   return (
-    <div style={{ ...containerStyle, padding: "14px 12px 16px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, fontSize: 11, color: colors.text3 }}>
-        <span>Round {room.currentRound} / {room.totalRounds}</span>
-        <span style={{ color: colors.accentText, fontWeight: 500 }}>🙈 선: {leadPlayer.nickname}</span>
-      </div>
+    <div style={{ ...containerStyle, padding: "14px 12px 16px", justifyContent: "center" }}>
+      <Header round={room.currentRound} totalRounds={room.totalRounds} leadName={leadPlayer?.nickname} mode="vote" />
 
       <div style={{ textAlign: "center", marginBottom: 14 }}>
-        <p style={{ fontSize: 14, fontWeight: 500, color: colors.text1, margin: 0 }}>
-          {leadPlayer.nickname}이(가) 어디서 YES/NO를 할까?
+        <p style={{ fontSize: 14, fontWeight: 700, margin: 0, color: colors.text1 }}>
+          🙈 {leadPlayer?.nickname}가 답하는 중...
         </p>
-        <p style={{ fontSize: 11, color: colors.text3, margin: "2px 0 0" }}>
-          3층 카드 아래 YES/NO 중 하나 선택
+        <p style={{ fontSize: 11, color: colors.text3, margin: "4px 0 0" }}>
+          {answersLen} / {depth} 단계 답변 완료
         </p>
       </div>
 
-      <Pyramid pyramid={room.pyramid} mode="voting" onCardTap={onCardTap} />
-
-      <VoteBoxes selected={myVote} disabled={!!myVote} onSelect={onVote} />
-
-      <div style={{ marginTop: 12, padding: 8, borderRadius: radius.md, background: colors.surface2, fontSize: 11, color: colors.text3, textAlign: "center" }}>
-        👥 투표 완료 {submittedCount} / {totalVoters}
-      </div>
+      <Pyramid pyramid={room.pyramid} mode="answering-watch" />
     </div>
   );
 }
 
 // ============================================
-// 답변 화면
+// 결과 정리 (선 플레이어 답변 완료)
 // ============================================
-function AnsweringView({ room, leadPlayer, isLead, onCardTap }) {
-  if (!room.pyramid || !leadPlayer) return null;
-  const answersLen = (room.pyramid.answers || []).length;
-  return (
-    <div style={{ ...containerStyle, padding: "14px 12px 16px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, fontSize: 11, color: colors.text3 }}>
-        <span>Round {room.currentRound} / {room.totalRounds}</span>
-        <span style={{ color: colors.correctText, fontWeight: 500 }}>
-          ▶ {isLead ? "내 차례" : `${leadPlayer.nickname} 답변 중`}
-        </span>
-      </div>
-
-      <div style={{ textAlign: "center", marginBottom: 14 }}>
-        <p style={{ fontSize: 14, fontWeight: 500, color: colors.text1, margin: 0 }}>
-          {answersLen + 1}번째 질문에 답하세요
-        </p>
-        {isLead && (
-          <p style={{ fontSize: 11, color: colors.text3, margin: "2px 0 0" }}>
-            반짝이는 카드를 탭하세요
-          </p>
-        )}
-      </div>
-
-      <Pyramid pyramid={room.pyramid} mode={isLead ? "answering-lead" : "answering-watch"} onCardTap={onCardTap} />
-    </div>
-  );
-}
-
-// ============================================
-// 결과 정리
-// ============================================
-function ResultView({ room, leadPlayer, result, onNext }) {
+function ResultView({ room, leadPlayer, result, depth, onNext }) {
   if (!room.pyramid || !leadPlayer) return null;
   const answers = room.pyramid.answers || [];
-  const finalAnswer = answers[2];
-  const finalQuestion = finalAnswer?.question || "";
+  const sequence = getAnswerSequence(answers);
 
   return (
-    <div style={{ ...containerStyle, padding: "14px 12px 16px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, fontSize: 11, color: colors.text3 }}>
-        <span>Round {room.currentRound} / {room.totalRounds}</span>
-        <span style={{ color: colors.correctText, fontWeight: 500 }}>✓ 답변 완료</span>
-      </div>
+    <div style={{ ...containerStyle, padding: "14px 12px 16px", justifyContent: "center" }}>
+      <Header round={room.currentRound} totalRounds={room.totalRounds} leadName={leadPlayer.nickname} mode="vote" />
 
-      <div style={{ textAlign: "center", marginBottom: 16 }}>
-        <p style={{ fontSize: 14, fontWeight: 500, color: colors.text1, margin: 0 }}>
-          {leadPlayer.nickname}의 답변 결과
+      <div style={{ textAlign: "center", marginBottom: 14 }}>
+        <p style={{ fontSize: 14, fontWeight: 700, margin: 0, color: colors.text1 }}>
+          ✓ {leadPlayer.nickname}의 답변 완료
         </p>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
-        {answers.map((a, i) => (
-          <div key={i} style={{ display: "flex", alignItems: "center", padding: "10px 12px", borderRadius: radius.md, background: colors.surface2 }}>
-            <span style={{ fontSize: 11, color: colors.text3, width: 22 }}>{a.level}층</span>
-            <span style={{ fontSize: 13, color: colors.text1, flex: 1, wordBreak: "keep-all" }}>{a.question}</span>
-            <span
-              style={{
-                fontSize: 11,
-                fontWeight: 500,
-                padding: "3px 10px",
-                borderRadius: 100,
-                color: "#FFFFFF",
-                background: a.answer === "YES" ? colors.correctFill : colors.wrongFill,
-              }}
-            >
-              {a.answer}
-            </span>
-          </div>
-        ))}
-      </div>
+      <Pyramid pyramid={room.pyramid} mode="result" />
 
-      <div style={{ textAlign: "center", marginBottom: 12 }}>
-        <p style={{ fontSize: 12, color: colors.text3, margin: "0 0 8px" }}>최종 도착지</p>
-        {result && (
-          <div
-            style={{
-              display: "inline-block",
-              padding: "16px 24px",
-              borderRadius: radius.lg,
-              background: colors.accentBg,
-              border: `2px solid ${colors.accentBorder}`,
-              maxWidth: "100%",
-            }}
-          >
-            <div style={{ fontSize: 13, color: colors.accentText, opacity: 0.85, marginBottom: 6, wordBreak: "keep-all" }}>
-              {finalQuestion}
-            </div>
-            <div style={{ fontSize: 24, fontWeight: 600, color: colors.accentText, lineHeight: 1 }}>
-              {finalAnswer?.answer}
-            </div>
-          </div>
-        )}
+      <div style={{ marginTop: 14, marginBottom: 14 }}>
+        <AnswerSequence answers={sequence} targetName={leadPlayer.nickname} hint="이 경로를 맞춘 친구가 +1점!" />
       </div>
 
       <button
         onClick={onNext}
         style={{
-          marginTop: "auto",
-          width: "100%",
           padding: 12,
-          borderRadius: radius.md,
-          border: `1px solid ${colors.border2}`,
+          borderRadius: radius.lg,
+          border: `1.5px solid ${colors.border2}`,
           background: colors.surface,
           fontSize: 14,
-          fontWeight: 500,
+          fontWeight: 600,
           color: colors.text1,
+          cursor: "pointer",
+          fontFamily: "inherit",
+          boxShadow: shadow.sm,
         }}
       >
-        정답자 공개 →
+        🎉 정답자 공개 →
       </button>
     </div>
   );
 }
 
 // ============================================
-// 정답 공개 - 6개 도착지별 그룹화
+// 정답 공개
 // ============================================
-function RevealView({ room, players, leadPlayer, result, votes, isLastRound, onNext }) {
+function RevealView({ room, players, leadPlayer, result, votes, depth, isLastRound, onNext }) {
   if (!result || !leadPlayer || !room.pyramid) return null;
 
-  // 6개 도착지 표시: 3층 카드 × YES/NO
-  const destinations = [];
-  for (let idx = 0; idx < 3; idx++) {
-    for (const yn of ["Y", "N"]) {
-      destinations.push({
-        key: `${idx}${yn}`,
-        cardIdx: idx,
-        answer: yn === "Y" ? "YES" : "NO",
-        question: room.pyramid.level3[idx],
-      });
-    }
-  }
-
-  const correctDest = result.destination;
+  const correctVoters = votes.filter((v) => v.vote === result.destination);
+  const wrongVoters = votes.filter((v) => v.vote !== result.destination);
 
   return (
-    <div style={{ ...containerStyle, padding: "14px 12px 16px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, fontSize: 11, color: colors.text3 }}>
-        <span>Round {room.currentRound} / {room.totalRounds}</span>
-      </div>
+    <div style={{ ...containerStyle, padding: "14px 12px 16px", justifyContent: "center" }}>
+      <Header round={room.currentRound} totalRounds={room.totalRounds} leadName={leadPlayer.nickname} mode="vote" />
 
       <div style={{ textAlign: "center", marginBottom: 14 }}>
-        <p style={{ fontSize: 15, fontWeight: 500, color: colors.text1, margin: 0 }}>
-          {leadPlayer.nickname}의 답변은
-        </p>
-        <p style={{ fontSize: 13, color: colors.text3, margin: "4px 0 0", wordBreak: "keep-all" }}>
-          "{room.pyramid.level3[parseInt(correctDest[0], 10)]}" → <strong style={{ color: correctDest[1] === "Y" ? colors.correctFill : colors.wrongFill }}>{correctDest[1] === "Y" ? "YES" : "NO"}</strong>
-        </p>
-        <p style={{ fontSize: 11, color: colors.text3, margin: "4px 0 0" }}>
-          정답자에게 +1점
+        <div style={{ fontSize: 30, marginBottom: 4 }}>🎉</div>
+        <p style={{ fontSize: 15, fontWeight: 700, margin: 0, color: colors.text1 }}>
+          정답 공개!
         </p>
       </div>
 
-      {/* 도착지별 결과 - 카드별로 묶어서 표시 */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
-        {[0, 1, 2].map((cardIdx) => {
-          const cardQuestion = room.pyramid.level3[cardIdx];
-          const yesDest = `${cardIdx}Y`;
-          const noDest = `${cardIdx}N`;
-          const yesVoters = votes.filter((v) => v.vote === yesDest);
-          const noVoters = votes.filter((v) => v.vote === noDest);
-          const yesNicknames = yesVoters.map((v) => players.find((p) => p.id === v.playerId)?.nickname).filter(Boolean);
-          const noNicknames = noVoters.map((v) => players.find((p) => p.id === v.playerId)?.nickname).filter(Boolean);
-
-          const hasYesVoters = yesVoters.length > 0;
-          const hasNoVoters = noVoters.length > 0;
-          if (!hasYesVoters && !hasNoVoters) return null;
-
-          return (
-            <div key={cardIdx} style={{ padding: "8px 10px", borderRadius: radius.md, background: colors.surface2, border: `0.5px solid ${colors.border1}` }}>
-              <div style={{ fontSize: 11, color: colors.text3, marginBottom: 6, wordBreak: "keep-all" }}>
-                {cardQuestion}
-              </div>
-              {hasYesVoters && (
-                <DestRow
-                  label="YES"
-                  type="yes"
-                  isCorrect={correctDest === yesDest}
-                  voters={yesNicknames}
-                />
-              )}
-              {hasNoVoters && (
-                <DestRow
-                  label="NO"
-                  type="no"
-                  isCorrect={correctDest === noDest}
-                  voters={noNicknames}
-                />
-              )}
-            </div>
-          );
-        })}
+      {/* 정답자 */}
+      <div
+        style={{
+          padding: "12px 14px",
+          borderRadius: radius.lg,
+          background: colors.correctBg,
+          border: `2px solid ${colors.correctFill}`,
+          marginBottom: 10,
+          boxShadow: "0 2px 6px rgba(29,158,117,0.15)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 6 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: colors.correctText, letterSpacing: 0.5 }}>
+            ✅ 정답자 (+1점)
+          </span>
+        </div>
+        {correctVoters.length > 0 ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {correctVoters.map((v) => {
+              const player = players.find((p) => p.id === v.playerId);
+              if (!player) return null;
+              return (
+                <div
+                  key={v.playerId}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "4px 10px 4px 4px",
+                    borderRadius: 100,
+                    background: "#FFFFFF",
+                    boxShadow: shadow.sm,
+                  }}
+                >
+                  <Avatar nickname={player.nickname} size={22} />
+                  <span style={{ fontSize: 12, fontWeight: 600, color: colors.correctDeep }}>
+                    {player.nickname}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div style={{ fontSize: 12, color: colors.correctText, fontStyle: "italic" }}>
+            아무도 못 맞췄어요 🥲
+          </div>
+        )}
       </div>
+
+      {/* 오답자 */}
+      {wrongVoters.length > 0 && (
+        <div
+          style={{
+            padding: "10px 14px",
+            borderRadius: radius.lg,
+            background: colors.surface,
+            border: `1px solid ${colors.border1}`,
+            marginBottom: 12,
+          }}
+        >
+          <div style={{ fontSize: 10, color: colors.text3, marginBottom: 4 }}>
+            아쉽지만 못 맞춘 친구
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+            {wrongVoters.map((v) => {
+              const player = players.find((p) => p.id === v.playerId);
+              if (!player) return null;
+              return (
+                <span
+                  key={v.playerId}
+                  style={{
+                    fontSize: 11,
+                    color: colors.text3,
+                    padding: "2px 8px",
+                    borderRadius: 100,
+                    background: colors.surface2,
+                  }}
+                >
+                  {player.nickname}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* 점수 미리보기 */}
-      <div style={{ padding: "10px 12px", borderRadius: radius.md, background: colors.surface2, marginBottom: 12 }}>
-        <p style={{ fontSize: 11, color: colors.text3, margin: "0 0 6px" }}>현재 점수</p>
+      <div
+        style={{
+          padding: "10px 12px",
+          borderRadius: radius.md,
+          background: colors.surface,
+          border: `1px solid ${colors.border1}`,
+          marginBottom: 12,
+        }}
+      >
+        <p style={{ fontSize: 11, color: colors.text3, margin: "0 0 6px", fontWeight: 600 }}>
+          🏆 현재 점수
+        </p>
         <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", rowGap: 4, fontSize: 12, color: colors.text1 }}>
           {[...players]
             .sort((a, b) => (b.score || 0) - (a.score || 0))
             .map((p) => (
               <span key={p.id} style={{ marginRight: 8 }}>
-                {p.nickname} <strong style={{ fontWeight: 500 }}>{p.score || 0}</strong>
+                {p.nickname} <strong style={{ fontWeight: 700, color: colors.correctText }}>{p.score || 0}</strong>
               </span>
             ))}
         </div>
@@ -605,63 +858,20 @@ function RevealView({ room, players, leadPlayer, result, votes, isLastRound, onN
       <button
         onClick={onNext}
         style={{
-          marginTop: "auto",
-          width: "100%",
           padding: 12,
-          borderRadius: radius.md,
+          borderRadius: radius.lg,
           fontSize: 14,
-          fontWeight: 500,
-          border: `1px solid ${colors.border2}`,
+          fontWeight: 700,
+          border: "none",
           background: colors.accentBg,
-          color: colors.accentText,
+          color: colors.accentDeep,
+          boxShadow: "0 2px 4px rgba(83,74,183,0.15)",
+          cursor: "pointer",
+          fontFamily: "inherit",
         }}
       >
-        {isLastRound ? "최종 결과 보기 →" : "다음 라운드 →"}
+        {isLastRound ? "🎊 최종 결과 보기 →" : "▶ 다음 라운드 →"}
       </button>
-    </div>
-  );
-}
-
-function DestRow({ label, type, isCorrect, voters }) {
-  const fillColor = type === "yes" ? colors.correctFill : colors.wrongFill;
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        padding: "6px 8px",
-        borderRadius: radius.sm,
-        background: isCorrect ? (type === "yes" ? colors.correctBg : colors.wrongBg) : "transparent",
-        border: isCorrect ? `1.5px solid ${fillColor}` : "none",
-        marginTop: 4,
-      }}
-    >
-      <span
-        style={{
-          fontSize: 11,
-          fontWeight: 500,
-          padding: "2px 8px",
-          borderRadius: 100,
-          color: "#FFFFFF",
-          background: fillColor,
-          marginRight: 8,
-        }}
-      >
-        {label}
-      </span>
-      <div style={{ flex: 1, fontSize: 12, color: colors.text1, display: "flex", flexWrap: "wrap", gap: 4 }}>
-        {voters.map((n, i) => (
-          <span key={i}>
-            {n}
-            {i < voters.length - 1 && <span style={{ opacity: 0.4, marginLeft: 4 }}>·</span>}
-          </span>
-        ))}
-      </div>
-      {isCorrect && (
-        <span style={{ fontSize: 11, fontWeight: 500, color: colors.correctText, marginLeft: 4 }}>
-          +1점
-        </span>
-      )}
     </div>
   );
 }
@@ -683,10 +893,11 @@ function FinalResult({ players, myPlayerId, results, allVotes, totalRounds, onLe
     .filter(Boolean);
 
   return (
-    <div style={{ ...containerStyle, padding: "16px 12px 16px" }}>
+    <div style={{ ...containerStyle, padding: "16px 12px 16px", justifyContent: "center" }}>
       <div style={{ textAlign: "center", marginBottom: 16 }}>
-        <p style={{ fontSize: 11, color: colors.text3, letterSpacing: 1.2, margin: "0 0 2px" }}>GAME OVER</p>
-        <p style={{ fontSize: 18, fontWeight: 500, color: colors.text1, margin: 0 }}>
+        <div style={{ fontSize: 36, marginBottom: 4 }}>🎊</div>
+        <p style={{ fontSize: 11, color: colors.text3, letterSpacing: 1.2, margin: "0 0 2px", fontWeight: 600 }}>GAME OVER</p>
+        <p style={{ fontSize: 18, fontWeight: 700, color: colors.text1, margin: 0 }}>
           전체 {totalRounds}라운드 완료
         </p>
       </div>
@@ -700,7 +911,8 @@ function FinalResult({ players, myPlayerId, results, allVotes, totalRounds, onLe
           textAlign: "center",
           marginBottom: 14,
           background: colors.cardBg,
-          border: `2px solid ${colors.cardBorder}`,
+          border: `2px solid ${colors.cardBorderDeep}`,
+          boxShadow: shadow.cardLift,
         }}
       >
         <div
@@ -709,25 +921,25 @@ function FinalResult({ players, myPlayerId, results, allVotes, totalRounds, onLe
             top: -10,
             left: "50%",
             transform: "translateX(-50%)",
-            padding: "3px 10px",
+            padding: "3px 12px",
             borderRadius: 100,
             fontSize: 10,
-            fontWeight: 500,
+            fontWeight: 700,
             letterSpacing: 0.5,
             background: colors.cardAccent,
             color: colors.cardTextDeep,
           }}
         >
-          WINNER
+          👑 WINNER
         </div>
-        <div style={{ fontSize: 32, marginBottom: 4 }}>🏆</div>
-        <div style={{ fontSize: 20, fontWeight: 500, color: colors.cardText, marginBottom: 2 }}>
+        <div style={{ fontSize: 36, marginBottom: 4 }}>🏆</div>
+        <div style={{ fontSize: 22, fontWeight: 700, color: colors.cardTextDeep, marginBottom: 2 }}>
           {winner?.nickname || "?"}
         </div>
-        <div style={{ fontSize: 13, color: colors.cardTextDeep }}>{winner?.score || 0}점 획득</div>
+        <div style={{ fontSize: 13, color: colors.cardText, fontWeight: 600 }}>{winner?.score || 0}점 획득</div>
       </div>
 
-      {/* 나를 가장 잘 맞춘 사람 */}
+      {/* 소울메이트 */}
       {soulmatePlayers.length > 0 ? (
         <div
           style={{
@@ -740,7 +952,7 @@ function FinalResult({ players, myPlayerId, results, allVotes, totalRounds, onLe
         >
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
             <span style={{ fontSize: 14 }}>💝</span>
-            <span style={{ fontSize: 11, fontWeight: 500, letterSpacing: 0.3, color: colors.pinkText }}>
+            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.3, color: colors.pinkText }}>
               나를 가장 잘 맞춘 사람
             </span>
             {soulmatePlayers.length > 1 && (
@@ -751,6 +963,7 @@ function FinalResult({ players, myPlayerId, results, allVotes, totalRounds, onLe
                   borderRadius: 100,
                   background: colors.pinkBorder,
                   color: colors.pinkDeep,
+                  fontWeight: 600,
                 }}
               >
                 동률 {soulmatePlayers.length}명
@@ -762,7 +975,7 @@ function FinalResult({ players, myPlayerId, results, allVotes, totalRounds, onLe
               <div key={sp.id} style={{ display: "flex", alignItems: "center" }}>
                 <Avatar nickname={sp.nickname} size={36} style={{ marginRight: 12 }} />
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 14, fontWeight: 500, color: colors.pinkDeep }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: colors.pinkDeep }}>
                     {sp.nickname}
                   </div>
                   <div style={{ fontSize: 11, color: colors.pinkText }}>
@@ -781,13 +994,13 @@ function FinalResult({ players, myPlayerId, results, allVotes, totalRounds, onLe
             padding: "18px 14px",
             borderRadius: radius.lg,
             marginBottom: 14,
-            background: colors.surface2,
+            background: colors.surface,
             border: `1px dashed ${colors.border2}`,
             textAlign: "center",
           }}
         >
           <div style={{ fontSize: 28, marginBottom: 6 }}>🌀</div>
-          <div style={{ fontSize: 13, fontWeight: 500, color: colors.text1, marginBottom: 2 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: colors.text1, marginBottom: 2 }}>
             나를 맞춘 사람이 없네요
           </div>
           <div style={{ fontSize: 11, color: colors.text3 }}>당신은 미스터리한 사람!</div>
@@ -796,8 +1009,8 @@ function FinalResult({ players, myPlayerId, results, allVotes, totalRounds, onLe
 
       {/* 순위 */}
       <div style={{ marginBottom: 14 }}>
-        <p style={{ fontSize: 11, color: colors.text3, margin: "0 0 8px", paddingLeft: 4, letterSpacing: 0.3 }}>
-          전체 순위
+        <p style={{ fontSize: 11, color: colors.text3, margin: "0 0 8px", paddingLeft: 4, letterSpacing: 0.3, fontWeight: 600 }}>
+          🏅 전체 순위
         </p>
         <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
           {sortedPlayers.map((p, idx) => {
@@ -812,13 +1025,13 @@ function FinalResult({ players, myPlayerId, results, allVotes, totalRounds, onLe
                   borderRadius: radius.md,
                   ...(isMe
                     ? { background: colors.accentBg, border: `1px solid ${colors.accentBorder}` }
-                    : { background: colors.surface2 }),
+                    : { background: colors.surface, border: `1px solid ${colors.border1}` }),
                 }}
               >
                 <span
                   style={{
                     fontSize: 13,
-                    fontWeight: 500,
+                    fontWeight: 700,
                     width: 22,
                     color: isMe ? colors.accentText : colors.text3,
                   }}
@@ -831,13 +1044,13 @@ function FinalResult({ players, myPlayerId, results, allVotes, totalRounds, onLe
                     flex: 1,
                     fontSize: 13,
                     color: colors.text1,
-                    fontWeight: isMe ? 500 : 400,
+                    fontWeight: isMe ? 700 : 500,
                   }}
                 >
                   {p.nickname}
                   {isMe && <span style={{ fontSize: 10, color: colors.accentText, marginLeft: 4 }}>나</span>}
                 </div>
-                <span style={{ fontSize: 13, color: colors.text1, fontWeight: isMe ? 500 : 400 }}>
+                <span style={{ fontSize: 13, color: colors.text1, fontWeight: 700 }}>
                   {p.score || 0}점
                 </span>
               </div>
@@ -846,36 +1059,23 @@ function FinalResult({ players, myPlayerId, results, allVotes, totalRounds, onLe
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: "auto" }}>
-        <button
-          onClick={onLeave}
-          style={{
-            padding: 12,
-            borderRadius: radius.md,
-            border: `1px solid ${colors.border2}`,
-            background: colors.surface,
-            fontSize: 13,
-            fontWeight: 500,
-            color: colors.text3,
-          }}
-        >
-          나가기
-        </button>
-        <button
-          onClick={onLeave}
-          style={{
-            padding: 12,
-            borderRadius: radius.md,
-            border: `1px solid ${colors.border2}`,
-            background: colors.accentBg,
-            fontSize: 13,
-            fontWeight: 500,
-            color: colors.accentText,
-          }}
-        >
-          홈으로 →
-        </button>
-      </div>
+      <button
+        onClick={onLeave}
+        style={{
+          padding: 12,
+          borderRadius: radius.lg,
+          border: "none",
+          background: `linear-gradient(180deg, ${colors.correctFillLight} 0%, ${colors.correctFill} 100%)`,
+          fontSize: 14,
+          fontWeight: 700,
+          color: "#FFFFFF",
+          boxShadow: shadow.button,
+          cursor: "pointer",
+          fontFamily: "inherit",
+        }}
+      >
+        🏠 홈으로
+      </button>
     </div>
   );
 }

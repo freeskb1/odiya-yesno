@@ -1,64 +1,104 @@
 import { QUESTIONS } from "./questions";
 
-// 3자리 방 코드 생성 (100-999)
+// ============================================
+// 피라미드 구조
+// ============================================
+// depth=3: 1+2+3 = 6장, 도착지 6개
+// depth=4: 1+2+3+4 = 10장, 도착지 8개
+// depth=5: 1+2+3+4+5 = 15장, 도착지 10개
+//
+// 피라미드 형태:
+// { depth: 3, levels: [[q], [q,q], [q,q,q]], answers: [] }
+
 export function generateRoomCode() {
   return String(Math.floor(100 + Math.random() * 900));
 }
 
-// 질문 풀에서 6장 추출 + 피라미드 생성
-export function createPyramid() {
+// 필요한 카드 수
+export function getCardCountForDepth(depth) {
+  let total = 0;
+  for (let i = 1; i <= depth; i++) total += i;
+  return total;
+}
+
+// 피라미드 생성
+export function createPyramid(depth = 3) {
+  const totalCards = getCardCountForDepth(depth);
   const shuffled = [...QUESTIONS].sort(() => Math.random() - 0.5);
-  const six = shuffled.slice(0, 6);
+  const cards = shuffled.slice(0, totalCards);
+
+  const levels = [];
+  let idx = 0;
+  for (let lv = 1; lv <= depth; lv++) {
+    const levelCards = [];
+    for (let i = 0; i < lv; i++) {
+      levelCards.push(cards[idx++]);
+    }
+    levels.push(levelCards);
+  }
+
   return {
-    level1: six[0],
-    level2: [six[1], six[2]],
-    level3: [six[3], six[4], six[5]],
+    depth,
+    levels,
     answers: [],
   };
 }
 
-// 1층/2층 답변에 따른 3층 인덱스 (YES → 왼쪽, NO → 오른쪽)
-export function getThirdLevelIndex(answers) {
+// 특정 레벨의 카드 인덱스 계산
+// 이전 답변들을 거쳐서 현재 어느 카드까지 왔는지
+// YES → 왼쪽(인덱스 그대로), NO → 오른쪽(인덱스 +1)
+export function getCardIndexAtLevel(answers, targetLevel) {
+  if (targetLevel === 1) return 0;
   let idx = 0;
-  for (const a of answers.slice(0, 2)) {
-    if (a.answer === "NO") idx += 1;
+  for (let i = 0; i < targetLevel - 1; i++) {
+    if (answers[i] && answers[i].answer === "NO") idx += 1;
   }
   return idx;
-}
-
-// 도착지 - 6개 (3층 카드 인덱스 + YES/NO)
-// 형식: "0Y", "0N", "1Y", "1N", "2Y", "2N"
-export function getDestination(answers) {
-  if (answers.length < 3) return null;
-  const thirdIdx = getThirdLevelIndex(answers.slice(0, 2));
-  const thirdAns = answers[2].answer;
-  return `${thirdIdx}${thirdAns === "YES" ? "Y" : "N"}`;
-}
-
-// 가능한 모든 도착지 6개 (UI에서 투표 옵션으로 사용)
-export const ALL_DESTINATIONS = ["0Y", "0N", "1Y", "1N", "2Y", "2N"];
-
-// 도착지를 사람이 읽을 수 있는 형태로
-export function describeDestination(dest, pyramid) {
-  if (!dest || !pyramid) return "";
-  const idx = parseInt(dest[0], 10);
-  const yn = dest[1] === "Y" ? "YES" : "NO";
-  return `${pyramid.level3[idx]} → ${yn}`;
 }
 
 // 현재 답변할 차례의 카드
 export function getCurrentQuestion(pyramid) {
   const answers = pyramid.answers || [];
-  if (answers.length === 0) return { level: 1, question: pyramid.level1, cardIndex: 0 };
-  if (answers.length === 1) {
-    const idx = answers[0].answer === "YES" ? 0 : 1;
-    return { level: 2, question: pyramid.level2[idx], cardIndex: idx };
+  if (answers.length >= pyramid.depth) return null;
+
+  const targetLevel = answers.length + 1;
+  const cardIdx = getCardIndexAtLevel(answers, targetLevel);
+  return {
+    level: targetLevel,
+    cardIndex: cardIdx,
+    question: pyramid.levels[targetLevel - 1][cardIdx],
+  };
+}
+
+// 도착지 - "{최종층인덱스}{Y/N}"
+// 예: depth=3 → 도착지 6개 ("0Y", "0N", "1Y", "1N", "2Y", "2N")
+// 예: depth=4 → 도착지 8개 ("0Y" ~ "3N")
+export function getDestination(answers) {
+  if (!answers || answers.length === 0) return null;
+  const depth = answers.length;
+  const finalIdx = getCardIndexAtLevel(answers, depth);
+  const finalAns = answers[depth - 1].answer;
+  return `${finalIdx}${finalAns === "Y" || finalAns === "YES" ? "Y" : "N"}`;
+}
+
+// 답변 경로로부터 모든 (level, cardIdx) 좌표 반환
+// 시각화에 사용
+export function getPathFromAnswers(answers) {
+  const path = [];
+  for (let lv = 1; lv <= answers.length; lv++) {
+    const cardIdx = getCardIndexAtLevel(answers, lv);
+    path.push({
+      level: lv,
+      cardIndex: cardIdx,
+      answer: answers[lv - 1].answer,
+    });
   }
-  if (answers.length === 2) {
-    const idx = getThirdLevelIndex(answers);
-    return { level: 3, question: pyramid.level3[idx], cardIndex: idx };
-  }
-  return null;
+  return path;
+}
+
+// 답변 시퀀스만 추출: ["YES", "NO", "NO"] 형태
+export function getAnswerSequence(answers) {
+  return (answers || []).map((a) => a.answer);
 }
 
 // 라운드 수 계산

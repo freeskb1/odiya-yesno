@@ -3,16 +3,11 @@ import {
   ref,
   set,
   get,
-  push,
   update,
   remove,
   onValue,
   off,
   serverTimestamp,
-  runTransaction,
-  query,
-  orderByChild,
-  equalTo,
 } from "firebase/database";
 import {
   generateRoomCode,
@@ -24,24 +19,11 @@ import {
 } from "./game";
 
 // ============================================
-// 데이터 구조
-// ============================================
-// rooms/{code}: {
-//   code, status: 'waiting'|'playing'|'finished',
-//   currentRound, totalRounds, currentLeadPlayerId,
-//   pyramid, playerOrder: [...], createdAt
-// }
-// rooms/{code}/players/{playerId}: { nickname, isHost, score, joinedAt }
-// rooms/{code}/votes/{round}/{playerId}: { vote: 'A'|'B'|'C', isCorrect }
-// rooms/{code}/results/{round}: { leadPlayerId, answers, destination }
-
-// ============================================
 // 방 생성
 // ============================================
 export async function createRoom(nickname) {
   const user = await ensureSignedIn();
 
-  // 고유 코드 생성 (충돌 시 재시도)
   let code = "";
   for (let i = 0; i < 10; i++) {
     code = generateRoomCode();
@@ -53,6 +35,7 @@ export async function createRoom(nickname) {
   const roomData = {
     code,
     status: "waiting",
+    depth: 3, // 기본 3단계
     currentRound: 0,
     totalRounds: 0,
     currentLeadPlayerId: null,
@@ -70,7 +53,6 @@ export async function createRoom(nickname) {
   };
 
   await set(ref(db, `rooms/${code}`), roomData);
-
   return { code, playerId };
 }
 
@@ -89,7 +71,6 @@ export async function joinRoom(code, nickname) {
     return { error: "이미 게임이 시작된 방이에요" };
   }
 
-  // 닉네임 중복 체크
   const players = room.players || {};
   for (const id in players) {
     if (players[id].nickname === nickname && id !== user.uid) {
@@ -109,12 +90,17 @@ export async function joinRoom(code, nickname) {
 }
 
 // ============================================
+// 방장: 단계 변경
+// ============================================
+export async function updateDepth(code, depth) {
+  await update(ref(db, `rooms/${code}`), { depth });
+}
+
+// ============================================
 // 방 떠나기
 // ============================================
 export async function leaveRoom(code, playerId) {
   await remove(ref(db, `rooms/${code}/players/${playerId}`));
-
-  // 모든 플레이어가 떠났으면 방 삭제
   const snapshot = await get(ref(db, `rooms/${code}/players`));
   if (!snapshot.exists()) {
     await remove(ref(db, `rooms/${code}`));
@@ -134,7 +120,7 @@ export function subscribeRoom(code, callback) {
 }
 
 // ============================================
-// 게임 시작 (방장)
+// 게임 시작
 // ============================================
 export async function startGame(code) {
   const snapshot = await get(ref(db, `rooms/${code}`));
@@ -143,9 +129,10 @@ export async function startGame(code) {
   const playerIds = Object.keys(room.players || {});
   if (playerIds.length < 2) return;
 
+  const depth = room.depth || 3;
   const order = buildLeadPlayerOrder(playerIds);
   const totalRounds = calculateTotalRounds(playerIds.length);
-  const pyramid = createPyramid();
+  const pyramid = createPyramid(depth);
 
   await update(ref(db, `rooms/${code}`), {
     status: "playing",
@@ -158,11 +145,11 @@ export async function startGame(code) {
 }
 
 // ============================================
-// 투표
+// 투표 (vote = "0Y", "0N", "1Y" 등)
 // ============================================
-export async function submitVote(code, round, playerId, option) {
+export async function submitVote(code, round, playerId, vote) {
   await set(ref(db, `rooms/${code}/votes/${round}/${playerId}`), {
-    vote: option,
+    vote,
     isCorrect: null,
   });
 }
@@ -188,8 +175,8 @@ export async function submitAnswer(code, answer) {
     answers: newAnswers,
   });
 
-  // 3개 답변 완료 시 → 라운드 결과 기록
-  if (newAnswers.length === 3) {
+  // depth 답변 완료 시 → 라운드 결과 기록
+  if (newAnswers.length === room.pyramid.depth) {
     const destination = getDestination(newAnswers);
     if (destination) {
       await set(ref(db, `rooms/${code}/results/${room.currentRound}`), {
@@ -202,7 +189,7 @@ export async function submitAnswer(code, answer) {
 }
 
 // ============================================
-// 정답 공개 (점수 부여)
+// 정답 공개
 // ============================================
 export async function revealResult(code, round) {
   const snapshot = await get(ref(db, `rooms/${code}`));
@@ -220,7 +207,6 @@ export async function revealResult(code, round) {
     updates[`votes/${round}/${playerId}/isCorrect`] = isCorrect;
 
     if (isCorrect) {
-      // 점수 +1
       const player = room.players[playerId];
       if (player) {
         updates[`players/${playerId}/score`] = (player.score || 0) + 1;
@@ -228,9 +214,7 @@ export async function revealResult(code, round) {
     }
   }
 
-  // revealed 마크 (다음 단계로 넘어가는 트리거)
   updates[`results/${round}/revealed`] = true;
-
   await update(ref(db, `rooms/${code}`), updates);
 }
 
@@ -244,13 +228,12 @@ export async function nextRound(code) {
 
   const nextRoundNum = room.currentRound + 1;
   if (nextRoundNum > room.totalRounds) {
-    // 게임 종료
     await update(ref(db, `rooms/${code}`), { status: "finished" });
     return;
   }
 
   const nextLead = room.playerOrder[nextRoundNum - 1];
-  const newPyramid = createPyramid();
+  const newPyramid = createPyramid(room.depth || 3);
 
   await update(ref(db, `rooms/${code}`), {
     currentRound: nextRoundNum,
@@ -260,7 +243,7 @@ export async function nextRound(code) {
 }
 
 // ============================================
-// 방 닫기 (방장)
+// 방 닫기
 // ============================================
 export async function closeRoom(code) {
   await remove(ref(db, `rooms/${code}`));
