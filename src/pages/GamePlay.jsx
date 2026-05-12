@@ -65,91 +65,86 @@ export default function GamePlay({ room, code, myPlayerId }) {
   const nonLeadCount = players.length - 1;
   const submittedVotesCount = currentVotes.length;
 
-  // ============ Phase 전환 ============
+  // ============ Phase 전환 (단순화) ============
+  const answersLen = (room.pyramid?.answers || []).length;
+
+  // 게임 종료
   useEffect(() => {
     if (room.status === "finished") setPhase("final");
   }, [room.status]);
 
-  // 라운드 변경 시 → intro → 다음 단계
+  // 라운드 시작 인트로 (라운드 변경 시)
   useEffect(() => {
     if (room.status !== "playing") return;
-    setPhase("intro");
-    setMyStepAnswers([]); // 라운드마다 초기화
-
-    const t = setTimeout(() => {
-      const answersLen = (room.pyramid?.answers || []).length;
-      if (answersLen > 0) {
-        setPhase("answering");
-      } else {
-        setPhase(isLead ? "lead-answering" : "voting-popup");
-      }
-    }, 2500);
-    return () => clearTimeout(t);
+    // 라운드 처음일 때만 intro 표시 (answers 가 0)
+    if ((room.pyramid?.answers || []).length === 0) {
+      setPhase("intro");
+      setMyStepAnswers([]);
+      const t = setTimeout(() => {
+        setPhase("__active__"); // 트리거용 - 아래 통합 effect 에서 실제 phase 결정
+      }, 2500);
+      return () => clearTimeout(t);
+    }
   }, [room.currentRound, room.status]); // eslint-disable-line
 
-  // 모든 투표 완료 시 → answering
+  // 통합 phase 결정 - 단일 effect로 모든 상태 전환 처리
   useEffect(() => {
     if (room.status !== "playing") return;
-    if (
-      (phase === "voting-popup" || phase === "voting-confirm" || phase === "lead-waiting") &&
-      submittedVotesCount >= nonLeadCount &&
-      nonLeadCount > 0 &&
-      isLead
-    ) {
-      setPhase("lead-answering");
-    }
-    if (
-      (phase === "voting-popup" || phase === "voting-confirm") &&
-      myVote &&
-      submittedVotesCount >= nonLeadCount &&
-      nonLeadCount > 0 &&
-      !isLead
-    ) {
-      // 본인은 이미 투표했고, 다른 투표자들도 모두 완료
-      // → 선 플레이어 답변 시청 모드
-      setPhase("answering");
-    }
-  }, [submittedVotesCount, nonLeadCount, phase, room.status, isLead, myVote]);
+    if (phase === "intro") return; // intro 동안은 건드리지 않음
+    if (phase === "voting-confirm") return; // 사용자가 확정 버튼 누를 때까지 대기
 
-  // 본인 투표 완료 후, 다른 사람 기다리기
-  useEffect(() => {
-    if (myVote && phase === "voting-confirm" && !isLead) {
-      setPhase("voted-waiting");
+    // 결과 공개됨 → reveal
+    if (currentResult?.revealed) {
+      if (phase !== "reveal") setPhase("reveal");
+      return;
     }
-  }, [myVote, phase, isLead]);
 
-  // 선 플레이어 답변 진행 중 watching
-  const answersLen = (room.pyramid?.answers || []).length;
-  useEffect(() => {
-    if (
-      !isLead &&
-      myVote &&
-      answersLen > 0 &&
-      (phase === "voted-waiting" || phase === "voting-popup")
-    ) {
-      setPhase("answering"); // 시청 모드
+    // depth 답변 완료 → result
+    if (answersLen >= depth) {
+      if (phase !== "result") setPhase("result");
+      return;
     }
-  }, [answersLen, phase, isLead, myVote]);
 
-  // depth 답변 완료 → result
-  useEffect(() => {
-    if (
-      answersLen === depth &&
-      (phase === "answering" ||
-        phase === "lead-answering" ||
-        phase === "voted-waiting" ||
-        phase === "voting-popup")
-    ) {
-      setPhase("result");
+    if (isLead) {
+      // 선 플레이어 흐름
+      // 답변 시작 전: 다른 투표자 기다림 / 모두 완료 시 답변 시작
+      if (answersLen === 0) {
+        if (submittedVotesCount >= nonLeadCount && nonLeadCount > 0) {
+          if (phase !== "lead-answering") setPhase("lead-answering");
+        } else {
+          if (phase !== "lead-waiting") setPhase("lead-waiting");
+        }
+      } else {
+        // 답변 진행 중
+        if (phase !== "lead-answering") setPhase("lead-answering");
+      }
+    } else {
+      // 일반 플레이어 흐름
+      if (myVote) {
+        // 내 투표 완료
+        if (answersLen > 0) {
+          // 선 플레이어가 답변 시작
+          if (phase !== "answering") setPhase("answering");
+        } else {
+          // 다른 투표자 + 선 플레이어 답변 시작 대기
+          if (phase !== "voted-waiting") setPhase("voted-waiting");
+        }
+      } else {
+        // 아직 투표 안 함 → 단계별 팝업
+        if (phase !== "voting-popup") setPhase("voting-popup");
+      }
     }
-  }, [answersLen, depth, phase]);
-
-  // revealed → reveal
-  useEffect(() => {
-    if (currentResult?.revealed && phase === "result") {
-      setPhase("reveal");
-    }
-  }, [currentResult?.revealed, phase]);
+  }, [
+    phase,
+    room.status,
+    answersLen,
+    depth,
+    isLead,
+    myVote,
+    submittedVotesCount,
+    nonLeadCount,
+    currentResult?.revealed,
+  ]);
 
   // ============ 액션 ============
 
@@ -175,8 +170,17 @@ export default function GamePlay({ room, code, myPlayerId }) {
     const dest = getDestination(myStepAnswers);
     if (!dest) return;
     setVoteSubmitting(true);
-    await submitVote(code, room.currentRound, myPlayerId, dest);
-    // myVote 가 채워지면 useEffect 가 voted-waiting 으로 전환
+    try {
+      await submitVote(code, room.currentRound, myPlayerId, dest);
+      // 명시적 전환 (Firebase 응답 대기 동안 깜빡임 방지)
+      setPhase(answersLen > 0 ? "answering" : "voted-waiting");
+    } catch (e) {
+      console.error("Vote submit failed:", e);
+      setVoteSubmitting(false);
+      alert("투표 전송 실패. 다시 시도해주세요.");
+      return;
+    }
+    setVoteSubmitting(false);
   }
 
   // 선 플레이어 답변
@@ -335,6 +339,7 @@ export default function GamePlay({ room, code, myPlayerId }) {
         leadPlayer={leadPlayer}
         result={currentResult}
         depth={depth}
+        myPlayerId={myPlayerId}
         onNext={handleReveal}
       />
     );
@@ -349,13 +354,19 @@ export default function GamePlay({ room, code, myPlayerId }) {
         result={currentResult}
         votes={currentVotes}
         depth={depth}
+        myPlayerId={myPlayerId}
         isLastRound={room.currentRound >= room.totalRounds}
         onNext={handleNextRound}
       />
     );
   }
 
-  return null;
+  // Fallback: phase 가 어디에도 매칭 안 되면 로딩 표시
+  return (
+    <div style={{ ...containerStyle, justifyContent: "center", alignItems: "center" }}>
+      <div style={{ color: colors.text3, fontSize: 13 }}>잠시만요...</div>
+    </div>
+  );
 }
 
 // ============================================
@@ -683,25 +694,31 @@ function WatchingScreen({ room, leadPlayer, depth, myAnswers }) {
 // ============================================
 // 결과 정리 (선 플레이어 답변 완료)
 // ============================================
-function ResultView({ room, leadPlayer, result, depth, onNext }) {
+function ResultView({ room, leadPlayer, result, depth, myPlayerId, onNext }) {
   if (!room.pyramid || !leadPlayer) return null;
   const answers = room.pyramid.answers || [];
   const sequence = getAnswerSequence(answers);
+  const isLead = leadPlayer.id === myPlayerId;
 
   return (
     <div style={{ ...containerStyle, padding: "14px 12px 16px", justifyContent: "center" }}>
-      <Header round={room.currentRound} totalRounds={room.totalRounds} leadName={leadPlayer.nickname} mode="vote" />
+      <Header round={room.currentRound} totalRounds={room.totalRounds} leadName={leadPlayer.nickname} mode={isLead ? "lead" : "vote"} />
 
       <div style={{ textAlign: "center", marginBottom: 14 }}>
         <p style={{ fontSize: 14, fontWeight: 700, margin: 0, color: colors.text1 }}>
-          ✓ {leadPlayer.nickname}의 답변 완료
+          {isLead ? "✓ 내 답변 완료" : `✓ ${leadPlayer.nickname}의 답변 완료`}
         </p>
       </div>
 
       <Pyramid pyramid={room.pyramid} mode="result" />
 
       <div style={{ marginTop: 14, marginBottom: 14 }}>
-        <AnswerSequence answers={sequence} targetName={leadPlayer.nickname} hint="이 경로를 맞춘 친구가 +1점!" />
+        <AnswerSequence
+          answers={sequence}
+          targetName={leadPlayer.nickname}
+          isLead={isLead}
+          hint={isLead ? "친구들의 예측을 확인해보세요" : "이 경로를 맞춘 친구가 +1점!"}
+        />
       </div>
 
       <button
@@ -728,15 +745,16 @@ function ResultView({ room, leadPlayer, result, depth, onNext }) {
 // ============================================
 // 정답 공개
 // ============================================
-function RevealView({ room, players, leadPlayer, result, votes, depth, isLastRound, onNext }) {
+function RevealView({ room, players, leadPlayer, result, votes, depth, myPlayerId, isLastRound, onNext }) {
   if (!result || !leadPlayer || !room.pyramid) return null;
 
   const correctVoters = votes.filter((v) => v.vote === result.destination);
   const wrongVoters = votes.filter((v) => v.vote !== result.destination);
+  const isLead = leadPlayer.id === myPlayerId;
 
   return (
     <div style={{ ...containerStyle, padding: "14px 12px 16px", justifyContent: "center" }}>
-      <Header round={room.currentRound} totalRounds={room.totalRounds} leadName={leadPlayer.nickname} mode="vote" />
+      <Header round={room.currentRound} totalRounds={room.totalRounds} leadName={leadPlayer.nickname} mode={isLead ? "lead" : "vote"} />
 
       <div style={{ textAlign: "center", marginBottom: 14 }}>
         <div style={{ fontSize: 30, marginBottom: 4 }}>🎉</div>
