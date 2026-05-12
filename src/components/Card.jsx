@@ -1,40 +1,57 @@
 import { colors, radius, shadow } from "../lib/theme";
 
-// variant: "current" | "active" | "passed" | "skip" | "disabled"
-// passedAnswer: "YES" | "NO" (passed인 경우)
-export function Card({ text, level, depth, variant = "active", passedAnswer, onClick }) {
-  // depth에 따라 폰트/패딩 조정
+// variant:
+//   "current"    - 현재 답할 카드 (반짝)
+//   "passed"     - 답변 완료된 카드 (진한 색 + YES/NO 표시)
+//   "my-guess"   - 내가 예측한 경로의 카드 (점선 강조, 답변 결과 보기 전 떨림 효과)
+//   "disabled"   - 비활성 (회색)
+//   "active"     - 일반 (탭 가능)
+export function Card({ text, level, depth, variant = "active", passedAnswer, myGuessAnswer, onClick }) {
   const isCompact = depth >= 4;
   const fontSize = isCompact ? 9 : level === 1 ? 11 : 10;
 
-  // skip: 안 선택한 길에 있는 카드 (점선 + 살짝 흐림)
-  if (variant === "skip") {
+  // 내 예측 경로 (점선 + 살짝 강조 + 내 예측 답변 작게 표시)
+  if (variant === "my-guess") {
+    const isYes = myGuessAnswer === "YES";
+    const accentColor = isYes ? colors.correctFill : colors.wrongFill;
     return (
       <div
         style={{
-          padding: isCompact ? "6px 3px" : "7px 4px",
+          padding: isCompact ? "6px 3px" : "8px 4px",
           borderRadius: radius.md,
           textAlign: "center",
-          background: colors.skipBg,
-          border: `1px dashed ${colors.skipBorder}`,
-          opacity: 0.8,
+          background: colors.surface,
+          border: `2px dashed ${accentColor}`,
+          boxShadow: shadow.sm,
         }}
       >
         <div
           style={{
-            fontSize: fontSize - 0.5,
-            color: colors.skipText,
+            fontSize,
+            fontWeight: 600,
+            color: colors.text2,
             lineHeight: 1.25,
             wordBreak: "keep-all",
           }}
         >
           {text}
         </div>
+        <div
+          style={{
+            fontSize: fontSize - 1,
+            fontWeight: 700,
+            color: accentColor,
+            marginTop: 3,
+            opacity: 0.85,
+          }}
+        >
+          내 예측: {myGuessAnswer}
+        </div>
       </div>
     );
   }
 
-  // passed: 답변 완료한 카드 (강조)
+  // passed: 답변 완료한 카드
   if (variant === "passed") {
     const isYes = passedAnswer === "YES";
     return (
@@ -78,7 +95,7 @@ export function Card({ text, level, depth, variant = "active", passedAnswer, onC
     );
   }
 
-  // disabled: 아예 닫힌 길의 카드
+  // disabled
   if (variant === "disabled") {
     return (
       <div
@@ -86,9 +103,9 @@ export function Card({ text, level, depth, variant = "active", passedAnswer, onC
           padding: isCompact ? "6px 3px" : "8px 4px",
           borderRadius: radius.md,
           textAlign: "center",
-          background: colors.surface3,
+          background: colors.surface2,
           border: `1px solid ${colors.border1}`,
-          opacity: 0.4,
+          opacity: 0.5,
         }}
       >
         <div
@@ -105,7 +122,7 @@ export function Card({ text, level, depth, variant = "active", passedAnswer, onC
     );
   }
 
-  // active / current: 일반 카드 (탭 가능)
+  // active / current
   const isCurrent = variant === "current";
   return (
     <button

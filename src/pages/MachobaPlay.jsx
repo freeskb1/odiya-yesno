@@ -1,0 +1,640 @@
+import { useState, useEffect, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
+import {
+  submitMachobaVote,
+  submitMachobaLeadAnswers,
+  revealMachobaResult,
+  nextRound,
+  leaveRoom,
+} from "../lib/room";
+import { clearPlayer } from "../lib/storage";
+import Avatar from "../components/Avatar";
+import StepPopup from "../components/StepPopup";
+import { colors, radius, shadow, containerStyle } from "../lib/theme";
+
+// 마쵸바 모드 게임 진행
+export default function MachobaPlay({ room, code, myPlayerId, leadPlayer, players, onFinish }) {
+  const navigate = useNavigate();
+  const [phase, setPhase] = useState("intro");
+  // 단계별 답변 수집 (선플레이어와 투표자 공통)
+  const [myStepAnswers, setMyStepAnswers] = useState([]);
+  const [submitting, setSubmitting] = useState(false);
+
+  const isLead = room.currentLeadPlayerId === myPlayerId;
+  const machoba = room.machoba;
+  const count = machoba?.count || 5;
+  const questions = machoba?.questions || [];
+  const leadAnswers = machoba?.leadAnswers; // 선 플레이어 답변 (배열 or null)
+
+  // 현재 라운드 votes
+  const currentVotes = useMemo(() => {
+    const v = (room.votes || {})[room.currentRound] || {};
+    return Object.entries(v).map(([pid, data]) => ({
+      playerId: pid,
+      voteArray: data.voteArray,
+      matchCount: data.matchCount,
+    }));
+  }, [room.votes, room.currentRound]);
+
+  const myVote = currentVotes.find((v) => v.playerId === myPlayerId);
+  const nonLeadCount = players.length - 1;
+  const submittedVotesCount = currentVotes.length;
+  const currentResult = (room.results || {})[room.currentRound];
+
+  // ============ Phase 전환 ============
+  // 라운드 시작 인트로
+  useEffect(() => {
+    if (room.status !== "playing") return;
+    // 새 라운드일 때만
+    if (!leadAnswers && currentVotes.length === 0) {
+      setPhase("intro");
+      setMyStepAnswers([]);
+      const t = setTimeout(() => setPhase("__active__"), 2500);
+      return () => clearTimeout(t);
+    }
+  }, [room.currentRound]); // eslint-disable-line
+
+  // 통합 phase
+  useEffect(() => {
+    if (room.status !== "playing") return;
+    if (phase === "intro") return;
+    if (phase === "voting-confirm" || phase === "lead-confirm") return; // 확정 버튼 대기
+
+    if (currentResult?.revealed) {
+      if (phase !== "reveal") setPhase("reveal");
+      return;
+    }
+
+    if (isLead) {
+      // 선 플레이어: 다른 사람들 투표 기다림 → 본인 답변
+      if (!leadAnswers) {
+        if (submittedVotesCount >= nonLeadCount && nonLeadCount > 0) {
+          // 답변 입력 시작
+          if (phase !== "lead-answering" && phase !== "lead-confirm") {
+            setPhase("lead-answering");
+          }
+        } else {
+          if (phase !== "lead-waiting") setPhase("lead-waiting");
+        }
+      } else {
+        // 답변 완료 → 결과 대기
+        if (phase !== "result") setPhase("result");
+      }
+    } else {
+      // 일반 플레이어
+      if (myVote) {
+        // 내 투표 완료
+        if (leadAnswers) {
+          // 선 플레이어도 답변 완료 → 결과 대기
+          if (phase !== "result") setPhase("result");
+        } else {
+          // 선 플레이어 답변 대기
+          if (phase !== "voted-waiting") setPhase("voted-waiting");
+        }
+      } else {
+        // 투표 시작
+        if (phase !== "voting-popup") setPhase("voting-popup");
+      }
+    }
+  }, [
+    phase, room.status, isLead, leadAnswers, myVote,
+    submittedVotesCount, nonLeadCount, currentResult?.revealed,
+  ]);
+
+  // ============ 액션 ============
+  function handleStepAnswer(answer) {
+    const newAnswers = [...myStepAnswers, answer];
+    setMyStepAnswers(newAnswers);
+    if (newAnswers.length === count) {
+      // 최종 확인 단계로
+      setPhase(isLead ? "lead-confirm" : "voting-confirm");
+    }
+  }
+
+  async function handleVoteConfirm() {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await submitMachobaVote(code, room.currentRound, myPlayerId, myStepAnswers);
+      setPhase(leadAnswers ? "result" : "voted-waiting");
+    } catch (e) {
+      console.error(e);
+      alert("투표 전송 실패");
+      setSubmitting(false);
+      return;
+    }
+    setSubmitting(false);
+  }
+
+  async function handleLeadConfirm() {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await submitMachobaLeadAnswers(code, myStepAnswers);
+      setPhase("result");
+    } catch (e) {
+      console.error(e);
+      alert("전송 실패");
+      setSubmitting(false);
+      return;
+    }
+    setSubmitting(false);
+  }
+
+  async function handleReveal() {
+    await revealMachobaResult(code, room.currentRound);
+  }
+
+  async function handleNextRound() {
+    await nextRound(code);
+  }
+
+  // ============ 렌더 ============
+  if (phase === "intro" || phase === "__active__") {
+    return <IntroScreen round={room.currentRound} totalRounds={room.totalRounds} leadPlayer={leadPlayer} count={count} />;
+  }
+
+  if (phase === "lead-waiting" && isLead) {
+    return <WaitingDark round={room.currentRound} totalRounds={room.totalRounds} votedCount={submittedVotesCount} totalCount={nonLeadCount} />;
+  }
+
+  // 일반 플레이어 / 선 플레이어 모두 동일한 팝업 인터페이스
+  if (phase === "voting-popup" || phase === "lead-answering") {
+    const nextStep = myStepAnswers.length + 1;
+    const question = questions[nextStep - 1];
+    return (
+      <>
+        <PopupBackground leadPlayer={leadPlayer} round={room.currentRound} totalRounds={room.totalRounds} isLead={isLead} />
+        <StepPopup
+          open={true}
+          currentStep={nextStep}
+          totalSteps={count}
+          question={question}
+          previousAnswers={null}
+          onAnswer={handleStepAnswer}
+          targetName={leadPlayer?.nickname || ""}
+          isLead={isLead}
+        />
+      </>
+    );
+  }
+
+  // 최종 확인 화면
+  if (phase === "voting-confirm" || phase === "lead-confirm") {
+    return (
+      <ConfirmView
+        round={room.currentRound}
+        totalRounds={room.totalRounds}
+        leadPlayer={leadPlayer}
+        questions={questions}
+        myAnswers={myStepAnswers}
+        isLead={isLead}
+        onConfirm={isLead ? handleLeadConfirm : handleVoteConfirm}
+        submitting={submitting}
+      />
+    );
+  }
+
+  if (phase === "voted-waiting" && !isLead) {
+    return (
+      <VotedWaiting
+        round={room.currentRound}
+        totalRounds={room.totalRounds}
+        leadPlayer={leadPlayer}
+        questions={questions}
+        myAnswers={myStepAnswers}
+      />
+    );
+  }
+
+  if (phase === "result") {
+    return (
+      <ResultView
+        room={room}
+        leadPlayer={leadPlayer}
+        questions={questions}
+        leadAnswers={leadAnswers || []}
+        myAnswers={isLead ? leadAnswers || [] : myStepAnswers}
+        isLead={isLead}
+        onNext={handleReveal}
+      />
+    );
+  }
+
+  if (phase === "reveal") {
+    return (
+      <RevealView
+        room={room}
+        players={players}
+        leadPlayer={leadPlayer}
+        questions={questions}
+        leadAnswers={leadAnswers || []}
+        votes={currentVotes}
+        myPlayerId={myPlayerId}
+        myAnswers={myStepAnswers}
+        isLead={isLead}
+        isLastRound={room.currentRound >= room.totalRounds}
+        onNext={handleNextRound}
+      />
+    );
+  }
+
+  return (
+    <div style={{ ...containerStyle, justifyContent: "center", alignItems: "center" }}>
+      <div style={{ color: colors.text3, fontSize: 13 }}>잠시만요...</div>
+    </div>
+  );
+}
+
+// ============================================
+// 인트로
+// ============================================
+function IntroScreen({ round, totalRounds, leadPlayer, count }) {
+  if (!leadPlayer) return null;
+  return (
+    <div style={{ ...containerStyle, alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <p style={{ fontSize: 11, color: colors.text3, letterSpacing: 1.2, margin: "0 0 6px", fontWeight: 600 }}>
+        ROUND {round} / {totalRounds}
+      </p>
+      <p style={{ fontSize: 14, color: colors.text3, margin: "0 0 20px" }}>🎯 마쵸바 시간</p>
+
+      <div style={{
+        display: "flex", flexDirection: "column", alignItems: "center",
+        padding: "28px 36px", borderRadius: radius.xl,
+        background: colors.accentBg, border: `2px solid ${colors.accentBorder}`,
+        marginBottom: 20, boxShadow: shadow.cardLift,
+      }}>
+        <Avatar nickname={leadPlayer.nickname} size={72} style={{ marginBottom: 12 }} />
+        <div style={{ fontSize: 24, fontWeight: 700, color: colors.accentDeep, marginBottom: 4 }}>
+          {leadPlayer.nickname}
+        </div>
+        <div style={{ fontSize: 11, color: colors.accentText, fontWeight: 600 }}>🙈 선 플레이어</div>
+      </div>
+
+      <p style={{ fontSize: 13, color: colors.text2, textAlign: "center", lineHeight: 1.5, margin: "0 0 16px", maxWidth: 280 }}>
+        {leadPlayer.nickname}을(를) 향한 <strong>{count}개</strong>의 질문!<br />
+        선 플레이어가 어떻게 답할지 맞춰봐요
+      </p>
+      <div style={{ fontSize: 11, color: colors.text3 }}>잠시 후 시작합니다...</div>
+    </div>
+  );
+}
+
+// ============================================
+// 팝업 배경
+// ============================================
+function PopupBackground({ leadPlayer, round, totalRounds, isLead }) {
+  return (
+    <div style={{ ...containerStyle, padding: "14px 12px 16px", justifyContent: "center", opacity: 0.4 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, fontSize: 11, color: colors.text3 }}>
+        <span style={{ fontWeight: 600 }}>Round {round} / {totalRounds}</span>
+        <span style={{ color: isLead ? colors.correctText : colors.accentText, fontWeight: 600 }}>
+          🙈 {isLead ? "내가 선" : `선: ${leadPlayer?.nickname}`}
+        </span>
+      </div>
+      <p style={{ textAlign: "center", fontSize: 14, fontWeight: 600 }}>
+        {isLead ? "내 답변 입력 중..." : `${leadPlayer?.nickname}이(가) 어떻게 답할지 예측 중...`}
+      </p>
+    </div>
+  );
+}
+
+// ============================================
+// 다크 대기 (선 플레이어용)
+// ============================================
+function WaitingDark({ round, totalRounds, votedCount, totalCount }) {
+  const percent = totalCount > 0 ? (votedCount / totalCount) * 100 : 0;
+  return (
+    <div style={{ ...containerStyle, background: "#1A1A1A", color: "#FFFFFF", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <p style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", margin: "0 0 24px", letterSpacing: 1.2 }}>
+        ROUND {round} / {totalRounds} · 당신은 선 플레이어
+      </p>
+      <div style={{
+        width: 96, height: 96, borderRadius: "50%", background: "rgba(255,255,255,0.08)",
+        display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 24,
+      }}>
+        <span style={{ fontSize: 48 }}>🙈</span>
+      </div>
+      <p style={{ fontSize: 18, fontWeight: 700, margin: "0 0 8px", textAlign: "center", lineHeight: 1.4 }}>
+        잠시만 기다려주세요!
+      </p>
+      <p style={{ fontSize: 13, opacity: 0.6, textAlign: "center", lineHeight: 1.5, margin: "0 0 32px", maxWidth: 260 }}>
+        친구들이 당신의 답을 예측 중이에요<br />
+        모두 끝나면 당신 차례입니다
+      </p>
+      <div style={{ width: "100%", maxWidth: 220, padding: "14px 16px", borderRadius: radius.md, background: "rgba(255,255,255,0.08)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+          <span style={{ fontSize: 11, opacity: 0.7 }}>투표 진행</span>
+          <span style={{ fontSize: 11, fontWeight: 700, opacity: 0.95 }}>{votedCount} / {totalCount}</span>
+        </div>
+        <div style={{ height: 4, borderRadius: 100, background: "rgba(255,255,255,0.15)", overflow: "hidden" }}>
+          <div style={{ height: "100%", width: `${percent}%`, background: colors.correctFill, borderRadius: 100, transition: "width 0.5s" }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================
+// 최종 확인 (투표자, 선플레이어 공통)
+// ============================================
+function ConfirmView({ round, totalRounds, leadPlayer, questions, myAnswers, isLead, onConfirm, submitting }) {
+  return (
+    <div style={{ ...containerStyle, padding: "14px 12px 16px", justifyContent: "center" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, fontSize: 11, color: colors.text3 }}>
+        <span style={{ fontWeight: 600 }}>Round {round} / {totalRounds}</span>
+        <span style={{ color: isLead ? colors.correctText : colors.accentText, fontWeight: 600 }}>
+          🙈 {isLead ? "내가 선" : `선: ${leadPlayer?.nickname}`}
+        </span>
+      </div>
+
+      <div style={{ textAlign: "center", marginBottom: 12 }}>
+        <p style={{ fontSize: 13, fontWeight: 700, margin: 0, color: colors.text1 }}>
+          {isLead ? "🎯 나의 답변 확인" : `💭 내가 예상한 ${leadPlayer?.nickname}의 답변`}
+        </p>
+        <p style={{ fontSize: 10, color: colors.text3, margin: "4px 0 0" }}>
+          {isLead ? "맞다면 확정해주세요" : "맞다면 확정해주세요"}
+        </p>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
+        {questions.map((q, i) => (
+          <AnswerRow key={i} index={i + 1} question={q} answer={myAnswers[i]} />
+        ))}
+      </div>
+
+      <button
+        onClick={onConfirm}
+        disabled={submitting}
+        style={{
+          padding: 13, borderRadius: radius.lg,
+          background: `linear-gradient(180deg, ${colors.correctFillLight} 0%, ${colors.correctFill} 100%)`,
+          color: "#FFFFFF", fontSize: 14, fontWeight: 700,
+          border: "none", boxShadow: shadow.button,
+          cursor: submitting ? "default" : "pointer",
+          fontFamily: "inherit", opacity: submitting ? 0.7 : 1,
+        }}
+      >
+        {submitting ? "전송 중..." : isLead ? "✨ 답변 확정" : "✨ 투표 확정"}
+      </button>
+    </div>
+  );
+}
+
+function AnswerRow({ index, question, answer, leadAnswer, showResult }) {
+  const isYes = answer === "YES";
+  const matched = showResult && answer === leadAnswer;
+  const showAnswerColors = !showResult;
+
+  return (
+    <div style={{
+      display: "flex", alignItems: "center",
+      padding: "8px 10px", borderRadius: radius.md,
+      background: matched ? colors.correctBg : showResult && !matched ? colors.wrongBg : colors.surface,
+      border: matched ? `1.5px solid ${colors.correctFill}` : showResult && !matched ? `1.5px solid ${colors.wrongFill}` : `1px solid ${colors.border1}`,
+      gap: 8,
+    }}>
+      <span style={{ fontSize: 10, color: colors.text3, fontWeight: 600, width: 14 }}>{index}</span>
+      <span style={{ fontSize: 12, color: colors.text1, flex: 1, wordBreak: "keep-all" }}>{question}</span>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+        {showResult ? (
+          <>
+            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+              <span style={{ fontSize: 9, color: colors.text3 }}>내 예측</span>
+              <span style={{
+                fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 100,
+                background: isYes ? colors.correctFill : colors.wrongFill, color: "#FFFFFF",
+              }}>
+                {answer}
+              </span>
+            </div>
+            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+              <span style={{ fontSize: 9, color: colors.text3 }}>실제</span>
+              <span style={{
+                fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 100,
+                background: leadAnswer === "YES" ? colors.correctFill : colors.wrongFill, color: "#FFFFFF",
+              }}>
+                {leadAnswer}
+              </span>
+              {matched && <span style={{ fontSize: 11, color: colors.correctFill }}>✓</span>}
+            </div>
+          </>
+        ) : (
+          <span style={{
+            fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 100,
+            color: "#FFFFFF",
+            background: showAnswerColors ? (isYes ? colors.correctFill : colors.wrongFill) : colors.text3,
+          }}>
+            {answer}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ============================================
+// 투표 후 대기 (선 플레이어 답변 기다림)
+// ============================================
+function VotedWaiting({ round, totalRounds, leadPlayer, questions, myAnswers }) {
+  return (
+    <div style={{ ...containerStyle, padding: "14px 12px 16px", justifyContent: "center" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, fontSize: 11, color: colors.text3 }}>
+        <span style={{ fontWeight: 600 }}>Round {round} / {totalRounds}</span>
+        <span style={{ color: colors.accentText, fontWeight: 600 }}>🙈 선: {leadPlayer?.nickname}</span>
+      </div>
+
+      <div style={{ textAlign: "center", marginBottom: 14 }}>
+        <div style={{ fontSize: 32, marginBottom: 6 }}>⏳</div>
+        <p style={{ fontSize: 14, fontWeight: 700, margin: 0, color: colors.text1 }}>
+          {leadPlayer?.nickname}가 답변 중...
+        </p>
+        <p style={{ fontSize: 11, color: colors.text3, margin: "4px 0 0" }}>
+          내 예측이 얼마나 맞을지 두근두근
+        </p>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 12 }}>
+        {questions.map((q, i) => (
+          <MyGuessRow key={i} index={i + 1} question={q} answer={myAnswers[i]} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// 점선으로 내 예측 표시 (실제 결과 나오기 전 떨림)
+function MyGuessRow({ index, question, answer }) {
+  const isYes = answer === "YES";
+  const color = isYes ? colors.correctFill : colors.wrongFill;
+  return (
+    <div style={{
+      display: "flex", alignItems: "center",
+      padding: "8px 10px", borderRadius: radius.md,
+      background: colors.surface,
+      border: `2px dashed ${color}`,
+      gap: 8,
+    }}>
+      <span style={{ fontSize: 10, color: colors.text3, fontWeight: 600, width: 14 }}>{index}</span>
+      <span style={{ fontSize: 11, color: colors.text2, flex: 1, wordBreak: "keep-all" }}>{question}</span>
+      <span style={{ fontSize: 10, fontWeight: 700, color }}>내 예측: {answer}</span>
+    </div>
+  );
+}
+
+// ============================================
+// 결과 정리 (선 플레이어 답변 완료, 정답 공개 직전)
+// ============================================
+function ResultView({ room, leadPlayer, questions, leadAnswers, myAnswers, isLead, onNext }) {
+  return (
+    <div style={{ ...containerStyle, padding: "14px 12px 16px", justifyContent: "center" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, fontSize: 11, color: colors.text3 }}>
+        <span style={{ fontWeight: 600 }}>Round {room.currentRound} / {room.totalRounds}</span>
+        <span style={{ color: isLead ? colors.correctText : colors.accentText, fontWeight: 600 }}>
+          🙈 {isLead ? "내가 선" : `선: ${leadPlayer?.nickname}`}
+        </span>
+      </div>
+
+      <div style={{ textAlign: "center", marginBottom: 14 }}>
+        <p style={{ fontSize: 14, fontWeight: 700, margin: 0, color: colors.text1 }}>
+          {isLead ? "✓ 내 답변 완료" : `✓ ${leadPlayer?.nickname}의 답변 완료`}
+        </p>
+        <p style={{ fontSize: 11, color: colors.text3, margin: "4px 0 0" }}>
+          {isLead ? "친구들의 예측을 확인해보세요" : "내 예측이 얼마나 맞았을까?"}
+        </p>
+      </div>
+
+      {/* 선플레이어 본인 답변 목록 */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 14 }}>
+        {questions.map((q, i) => (
+          <AnswerRow
+            key={i}
+            index={i + 1}
+            question={q}
+            answer={leadAnswers[i]}
+          />
+        ))}
+      </div>
+
+      <button
+        onClick={onNext}
+        style={{
+          padding: 12, borderRadius: radius.lg,
+          border: `1.5px solid ${colors.border2}`,
+          background: colors.surface, fontSize: 14, fontWeight: 600,
+          color: colors.text1, cursor: "pointer",
+          fontFamily: "inherit", boxShadow: shadow.sm,
+        }}
+      >
+        🎉 정답자 공개 →
+      </button>
+    </div>
+  );
+}
+
+// ============================================
+// 정답 공개 (모든 투표자의 점수 표시)
+// ============================================
+function RevealView({ room, players, leadPlayer, questions, leadAnswers, votes, myPlayerId, myAnswers, isLead, isLastRound, onNext }) {
+  const myVote = votes.find((v) => v.playerId === myPlayerId);
+  const myMatchCount = myVote?.matchCount ?? 0;
+  const count = questions.length;
+
+  // 점수 기준 정렬
+  const voterResults = [...votes]
+    .map((v) => ({
+      ...v,
+      player: players.find((p) => p.id === v.playerId),
+    }))
+    .filter((v) => v.player)
+    .sort((a, b) => (b.matchCount || 0) - (a.matchCount || 0));
+
+  return (
+    <div style={{ ...containerStyle, padding: "14px 12px 16px", justifyContent: "center" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, fontSize: 11, color: colors.text3 }}>
+        <span style={{ fontWeight: 600 }}>Round {room.currentRound} / {room.totalRounds}</span>
+        <span style={{ color: isLead ? colors.correctText : colors.accentText, fontWeight: 600 }}>
+          🙈 {isLead ? "내가 선" : `선: ${leadPlayer?.nickname}`}
+        </span>
+      </div>
+
+      <div style={{ textAlign: "center", marginBottom: 12 }}>
+        <div style={{ fontSize: 28, marginBottom: 4 }}>🎉</div>
+        <p style={{ fontSize: 15, fontWeight: 700, margin: 0, color: colors.text1 }}>
+          정답 공개!
+        </p>
+        {!isLead && (
+          <p style={{ fontSize: 12, color: colors.accentText, margin: "4px 0 0", fontWeight: 700 }}>
+            나는 {myMatchCount} / {count} 맞췄어요!
+          </p>
+        )}
+      </div>
+
+      {/* 본인 답변 vs 선 플레이어 답변 비교 (선플레이어가 아닐 때만) */}
+      {!isLead && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 12 }}>
+          {questions.map((q, i) => (
+            <AnswerRow
+              key={i}
+              index={i + 1}
+              question={q}
+              answer={myAnswers[i]}
+              leadAnswer={leadAnswers[i]}
+              showResult={true}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* 점수 표 */}
+      <div style={{ padding: "10px 12px", borderRadius: radius.md, background: colors.surface, border: `1px solid ${colors.border1}`, marginBottom: 12 }}>
+        <p style={{ fontSize: 11, color: colors.text3, margin: "0 0 8px", fontWeight: 700 }}>
+          🏆 이번 라운드 점수
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {voterResults.map((v) => (
+            <div key={v.playerId} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+              <Avatar nickname={v.player.nickname} size={20} />
+              <span style={{ flex: 1, color: colors.text1 }}>{v.player.nickname}</span>
+              <span style={{ fontWeight: 700, color: colors.correctText }}>
+                +{v.matchCount || 0}점
+              </span>
+              <span style={{ fontSize: 10, color: colors.text3 }}>
+                ({v.matchCount || 0}/{count})
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* 전체 누적 점수 */}
+      <div style={{ padding: "10px 12px", borderRadius: radius.md, background: colors.surface2, marginBottom: 12 }}>
+        <p style={{ fontSize: 11, color: colors.text3, margin: "0 0 6px", fontWeight: 600 }}>
+          누적 점수
+        </p>
+        <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", rowGap: 4, fontSize: 12 }}>
+          {[...players]
+            .sort((a, b) => (b.score || 0) - (a.score || 0))
+            .map((p) => (
+              <span key={p.id} style={{ marginRight: 8 }}>
+                {p.nickname} <strong style={{ fontWeight: 700, color: colors.correctText }}>{p.score || 0}</strong>
+              </span>
+            ))}
+        </div>
+      </div>
+
+      <button
+        onClick={onNext}
+        style={{
+          padding: 12, borderRadius: radius.lg,
+          fontSize: 14, fontWeight: 700,
+          border: "none", background: colors.accentBg, color: colors.accentDeep,
+          boxShadow: "0 2px 4px rgba(83,74,183,0.15)",
+          cursor: "pointer", fontFamily: "inherit",
+        }}
+      >
+        {isLastRound ? "🎊 최종 결과 보기 →" : "▶ 다음 라운드 →"}
+      </button>
+    </div>
+  );
+}

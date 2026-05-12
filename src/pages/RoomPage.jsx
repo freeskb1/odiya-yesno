@@ -7,6 +7,8 @@ import {
   leaveRoom,
   closeRoom,
   updateDepth,
+  updateGameMode,
+  updateMachobaCount,
 } from "../lib/room";
 import { loadPlayer, clearPlayer } from "../lib/storage";
 import Avatar from "../components/Avatar";
@@ -69,23 +71,19 @@ export default function RoomPage() {
   async function handleStartGame() {
     await startGame(code);
   }
-
   async function handleLeave() {
     if (!me) return;
-    const ok = confirm("방을 나가시겠어요? 점수가 사라집니다.");
-    if (!ok) return;
+    if (!confirm("방을 나가시겠어요?")) return;
     await leaveRoom(code, me.playerId);
     clearPlayer();
     navigate("/");
   }
-
   async function handleCloseRoom() {
     if (!confirm("방을 닫으시겠어요?")) return;
     await closeRoom(code);
     clearPlayer();
     navigate("/");
   }
-
   async function handleCopyCode() {
     try {
       await navigator.clipboard.writeText(code);
@@ -93,9 +91,14 @@ export default function RoomPage() {
       setTimeout(() => setCopied(false), 2000);
     } catch {}
   }
-
   async function handleSelectDepth(d) {
     await updateDepth(code, d);
+  }
+  async function handleSelectMode(m) {
+    await updateGameMode(code, m);
+  }
+  async function handleSelectMachobaCount(c) {
+    await updateMachobaCount(code, c);
   }
 
   if (closed) {
@@ -127,6 +130,8 @@ export default function RoomPage() {
       onStart={handleStartGame}
       onClose={handleCloseRoom}
       onSelectDepth={handleSelectDepth}
+      onSelectMode={handleSelectMode}
+      onSelectMachobaCount={handleSelectMachobaCount}
     />
   ) : (
     <GuestWaitingRoom
@@ -146,15 +151,11 @@ function playerListFromRoom(room) {
 }
 
 // =================== 방장 대기실 ===================
-function HostWaitingRoom({ room, players, qrDataUrl, copied, onCopy, onStart, onClose, onSelectDepth }) {
+function HostWaitingRoom({ room, players, qrDataUrl, copied, onCopy, onStart, onClose, onSelectDepth, onSelectMode, onSelectMachobaCount }) {
   const canStart = players.length >= 2;
+  const gameMode = room.gameMode || "odiya";
   const depth = room.depth || 3;
-
-  const depthOptions = [
-    { value: 3, label: "3단계", subtitle: "⭐ 기본", desc: "6장 / 도착지 6개" },
-    { value: 4, label: "4단계", subtitle: "⭐⭐ 중급", desc: "10장 / 도착지 8개" },
-    { value: 5, label: "5단계", subtitle: "⭐⭐⭐ 상급", desc: "15장 / 가로 권장" },
-  ];
+  const machobaCount = room.machobaCount || 5;
 
   return (
     <div style={{ ...containerStyle, padding: "16px 16px 24px" }}>
@@ -192,8 +193,8 @@ function HostWaitingRoom({ room, players, qrDataUrl, copied, onCopy, onStart, on
               src={qrDataUrl}
               alt="QR"
               style={{
-                width: 130,
-                height: 130,
+                width: 120,
+                height: 120,
                 borderRadius: radius.md,
                 border: `1px solid ${colors.border1}`,
                 background: colors.surface,
@@ -202,7 +203,7 @@ function HostWaitingRoom({ room, players, qrDataUrl, copied, onCopy, onStart, on
               }}
             />
           ) : (
-            <div style={{ width: 130, height: 130, borderRadius: radius.md, background: colors.surface2 }} />
+            <div style={{ width: 120, height: 120, borderRadius: radius.md, background: colors.surface2 }} />
           )}
         </div>
         <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
@@ -221,7 +222,7 @@ function HostWaitingRoom({ room, players, qrDataUrl, copied, onCopy, onStart, on
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  fontSize: 24,
+                  fontSize: 22,
                   fontWeight: 700,
                   color: colors.correctFill,
                   boxShadow: `${shadow.sm}, inset 0 0 0 1.5px ${colors.border1}`,
@@ -235,7 +236,7 @@ function HostWaitingRoom({ room, players, qrDataUrl, copied, onCopy, onStart, on
             onClick={onCopy}
             style={{
               fontSize: 11,
-              padding: "7px",
+              padding: "6px",
               borderRadius: radius.md,
               border: `1px solid ${colors.border1}`,
               background: colors.surface,
@@ -250,47 +251,83 @@ function HostWaitingRoom({ room, players, qrDataUrl, copied, onCopy, onStart, on
         </div>
       </div>
 
-      <p style={{ fontSize: 10, color: colors.text3, textAlign: "center", margin: "0 0 16px" }}>
-        📱 QR 스캔 또는 3자리 코드로 입장
-      </p>
-
-      {/* 단계 선택 */}
-      <div style={{ marginBottom: 14 }}>
+      {/* 게임 모드 선택 */}
+      <div style={{ marginBottom: 12 }}>
         <p style={{ fontSize: 11, color: colors.text2, margin: "0 0 6px", fontWeight: 700 }}>
-          🎯 게임 난이도
+          🎮 게임 모드
         </p>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
-          {depthOptions.map((opt) => {
-            const selected = depth === opt.value;
-            return (
-              <button
-                key={opt.value}
-                onClick={() => onSelectDepth(opt.value)}
-                style={{
-                  padding: "10px 4px",
-                  borderRadius: radius.md,
-                  border: selected ? `2px solid ${colors.correctFill}` : `1.5px solid ${colors.border1}`,
-                  background: selected ? colors.correctBg : colors.surface,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                  boxShadow: selected ? "0 2px 6px rgba(29,158,117,0.15)" : shadow.sm,
-                  transition: "all 0.15s",
-                }}
-              >
-                <div style={{ fontSize: 13, fontWeight: 700, color: selected ? colors.correctText : colors.text1 }}>
-                  {opt.label}
-                </div>
-                <div style={{ fontSize: 9, color: selected ? colors.correctText : colors.text3, opacity: 0.85, marginTop: 1 }}>
-                  {opt.subtitle}
-                </div>
-              </button>
-            );
-          })}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+          <ModeButton
+            selected={gameMode === "odiya"}
+            onClick={() => onSelectMode("odiya")}
+            emoji="🗺️"
+            title="오디야"
+            subtitle="피라미드 추리"
+          />
+          <ModeButton
+            selected={gameMode === "machoba"}
+            onClick={() => onSelectMode("machoba")}
+            emoji="🎯"
+            title="마쵸바"
+            subtitle="다중 퀴즈"
+          />
         </div>
-        <p style={{ fontSize: 9, color: colors.text3, margin: "5px 0 0", textAlign: "center" }}>
-          {depthOptions.find((o) => o.value === depth)?.desc}
-        </p>
       </div>
+
+      {/* 모드별 옵션 */}
+      {gameMode === "odiya" && (
+        <div style={{ marginBottom: 12 }}>
+          <p style={{ fontSize: 11, color: colors.text2, margin: "0 0 6px", fontWeight: 700 }}>
+            🎯 난이도
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+            {[
+              { value: 3, label: "3단계", subtitle: "⭐ 기본" },
+              { value: 4, label: "4단계", subtitle: "⭐⭐ 중급" },
+              { value: 5, label: "5단계", subtitle: "⭐⭐⭐ 상급" },
+            ].map((opt) => (
+              <OptionButton
+                key={opt.value}
+                selected={depth === opt.value}
+                onClick={() => onSelectDepth(opt.value)}
+                label={opt.label}
+                subtitle={opt.subtitle}
+              />
+            ))}
+          </div>
+          <p style={{ fontSize: 9, color: colors.text3, margin: "5px 0 0", textAlign: "center" }}>
+            {depth === 3 && "6장 / 도착지 6개"}
+            {depth === 4 && "10장 / 도착지 8개"}
+            {depth === 5 && "15장 / 가로 모드 권장"}
+          </p>
+        </div>
+      )}
+
+      {gameMode === "machoba" && (
+        <div style={{ marginBottom: 12 }}>
+          <p style={{ fontSize: 11, color: colors.text2, margin: "0 0 6px", fontWeight: 700 }}>
+            ❓ 문제 개수
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+            {[
+              { value: 3, label: "3문제", subtitle: "⚡ 짧게" },
+              { value: 5, label: "5문제", subtitle: "⭐ 기본" },
+              { value: 7, label: "7문제", subtitle: "🔥 길게" },
+            ].map((opt) => (
+              <OptionButton
+                key={opt.value}
+                selected={machobaCount === opt.value}
+                onClick={() => onSelectMachobaCount(opt.value)}
+                label={opt.label}
+                subtitle={opt.subtitle}
+              />
+            ))}
+          </div>
+          <p style={{ fontSize: 9, color: colors.text3, margin: "5px 0 0", textAlign: "center" }}>
+            맞춘 개수만큼 점수가 올라가요
+          </p>
+        </div>
+      )}
 
       <PlayerList players={players} myPlayerId={null} showWaitingSlot />
 
@@ -330,9 +367,62 @@ function HostWaitingRoom({ room, players, qrDataUrl, copied, onCopy, onStart, on
   );
 }
 
+function ModeButton({ selected, onClick, emoji, title, subtitle }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: "10px 6px",
+        borderRadius: radius.md,
+        border: selected ? `2px solid ${colors.correctFill}` : `1.5px solid ${colors.border1}`,
+        background: selected ? colors.correctBg : colors.surface,
+        cursor: "pointer",
+        fontFamily: "inherit",
+        boxShadow: selected ? "0 2px 6px rgba(29,158,117,0.15)" : shadow.sm,
+        transition: "all 0.15s",
+      }}
+    >
+      <div style={{ fontSize: 22, marginBottom: 2 }}>{emoji}</div>
+      <div style={{ fontSize: 13, fontWeight: 700, color: selected ? colors.correctText : colors.text1 }}>
+        {title}
+      </div>
+      <div style={{ fontSize: 9, color: selected ? colors.correctText : colors.text3, opacity: 0.85 }}>
+        {subtitle}
+      </div>
+    </button>
+  );
+}
+
+function OptionButton({ selected, onClick, label, subtitle }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: "10px 4px",
+        borderRadius: radius.md,
+        border: selected ? `2px solid ${colors.correctFill}` : `1.5px solid ${colors.border1}`,
+        background: selected ? colors.correctBg : colors.surface,
+        cursor: "pointer",
+        fontFamily: "inherit",
+        boxShadow: selected ? "0 2px 6px rgba(29,158,117,0.15)" : shadow.sm,
+        transition: "all 0.15s",
+      }}
+    >
+      <div style={{ fontSize: 13, fontWeight: 700, color: selected ? colors.correctText : colors.text1 }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 9, color: selected ? colors.correctText : colors.text3, opacity: 0.85, marginTop: 1 }}>
+        {subtitle}
+      </div>
+    </button>
+  );
+}
+
 // =================== 참여자 대기실 ===================
 function GuestWaitingRoom({ room, players, myPlayerId, onLeave }) {
+  const gameMode = room.gameMode || "odiya";
   const depth = room.depth || 3;
+  const machobaCount = room.machobaCount || 5;
   return (
     <div style={{ ...containerStyle, padding: "20px 16px 24px" }}>
       <div style={{ textAlign: "center", marginBottom: 16 }}>
@@ -366,16 +456,18 @@ function GuestWaitingRoom({ room, players, myPlayerId, onLeave }) {
         <span
           style={{
             display: "inline-block",
-            padding: "4px 12px",
+            padding: "5px 14px",
             borderRadius: 100,
             background: colors.surface,
             border: `1px solid ${colors.border1}`,
             fontSize: 11,
             color: colors.text2,
-            fontWeight: 600,
+            fontWeight: 700,
           }}
         >
-          🎯 {depth}단계 피라미드
+          {gameMode === "odiya"
+            ? `🗺️ 오디야 · ${depth}단계 피라미드`
+            : `🎯 마쵸바 · ${machobaCount}문제`}
         </span>
       </div>
 
@@ -395,7 +487,9 @@ function GuestWaitingRoom({ room, players, myPlayerId, onLeave }) {
           💡 게임 방법
         </p>
         <p style={{ fontSize: 11, color: colors.text2, margin: 0, lineHeight: 1.5 }}>
-          선 플레이어가 어떻게 답할지 예상해서 투표해요. 잘 맞출수록 점수가 올라가요!
+          {gameMode === "odiya"
+            ? "선 플레이어가 어떻게 답할지 예상해서 투표해요. 잘 맞출수록 점수가 올라가요!"
+            : `선 플레이어를 향한 ${machobaCount}개 질문에 답을 예측해요. 맞춘 개수만큼 점수!`}
         </p>
       </div>
 
@@ -510,7 +604,6 @@ function PlayerList({ players, myPlayerId, showWaitingSlot }) {
   );
 }
 
-// =================== 방 폐쇄 ===================
 function RoomClosed({ onHome }) {
   return (
     <div style={{ ...containerStyle, alignItems: "center", justifyContent: "center", padding: "32px 20px" }}>

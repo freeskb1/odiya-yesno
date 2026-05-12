@@ -154,6 +154,35 @@ export function calculateSoulmate(myPlayerId, myLeadRounds, allVotes) {
   };
 }
 
+// ============================================
+// 마쵸바 모드 (Quiz Mode)
+// ============================================
+// 구조: { count: 5, questions: [q1, q2, q3, q4, q5], leadAnswers: [...], voterAnswers: { [playerId]: [...] } }
+// count: 3, 5, 7 중 하나
+// 라운드 흐름:
+//   1. 5개 질문 동시에 표시
+//   2. 일반 플레이어들이 각 질문에 YES/NO 답변 (선 플레이어 답 예측)
+//   3. 모두 완료되면 선 플레이어가 본인의 진짜 답변 5개 입력
+//   4. 일치한 개수만큼 일반 플레이어에게 점수
+//
+export function createMachobaQuestions(count = 5) {
+  const shuffled = [...QUESTIONS].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, count);
+}
+
+// 일치한 개수 계산
+// myVote: ["YES", "NO", ...] 일반 플레이어 답변
+// leadAnswers: ["YES", "NO", ...] 선 플레이어 답변
+// 둘 다 같은 인덱스 위치에서 같은 값이면 정답
+export function countMachobaMatches(myVote, leadAnswers) {
+  if (!myVote || !leadAnswers) return 0;
+  let count = 0;
+  for (let i = 0; i < Math.min(myVote.length, leadAnswers.length); i++) {
+    if (myVote[i] === leadAnswers[i]) count += 1;
+  }
+  return count;
+}
+
 // 아바타 색상
 const AVATAR_COLORS = [
   "#1D9E75", "#D4537E", "#534AB7", "#BA7517",
