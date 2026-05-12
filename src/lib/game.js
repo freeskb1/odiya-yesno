@@ -1,31 +1,119 @@
 import { QUESTIONS } from "./questions";
 
 // ============================================
-// 피라미드 구조
+// 한국어 조사 처리 유틸
 // ============================================
-// depth=3: 1+2+3 = 6장, 도착지 6개
-// depth=4: 1+2+3+4 = 10장, 도착지 8개
-// depth=5: 1+2+3+4+5 = 15장, 도착지 10개
-//
-// 피라미드 형태:
-// { depth: 3, levels: [[q], [q,q], [q,q,q]], answers: [] }
+export function hasJongseong(str) {
+  if (!str || typeof str !== "string") return false;
+  const lastChar = str[str.length - 1];
+  const code = lastChar.charCodeAt(0);
+  if (code < 0xAC00 || code > 0xD7A3) return false;
+  return (code - 0xAC00) % 28 !== 0;
+}
 
+export function josa(name, pair) {
+  if (!name) return "";
+  const [withJong, withoutJong] = pair.split("/");
+  return name + (hasJongseong(name) ? withJong : withoutJong);
+}
+
+// ============================================
+// 게임 룸 코드
+// ============================================
 export function generateRoomCode() {
   return String(Math.floor(100 + Math.random() * 900));
 }
 
-// 필요한 카드 수
+// ============================================
+// 피라미드
+// ============================================
 export function getCardCountForDepth(depth) {
   let total = 0;
   for (let i = 1; i <= depth; i++) total += i;
   return total;
 }
 
-// 피라미드 생성
-export function createPyramid(depth = 3) {
-  const totalCards = getCardCountForDepth(depth);
-  const shuffled = [...QUESTIONS].sort(() => Math.random() - 0.5);
-  const cards = shuffled.slice(0, totalCards);
+// 배열 셔플 (Fisher-Yates - sort 보다 균등)
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// ============================================
+// 전체 게임 질문 풀 생성 (라운드 순서 + 플레이어 순서 고려)
+// ============================================
+//
+// playerOrder: [pid1, pid2, pid1, pid2] (라운드별 선플레이어)
+// perRoundCount: 라운드당 필요 질문 수
+// usedQuestionsByPlayer: { [playerId]: [질문문자열, ...] } - 이전에 사용한 질문들
+//
+// 반환:
+//   pool: [질문, 질문, ...] (라운드 순서대로 평탄화된 배열, 전체 길이 = totalRounds * perRoundCount)
+//   newUsedQuestions: { [playerId]: [...] } - 갱신된 사용 질문 (기존 + 이번 게임)
+//
+// 각 라운드의 perRoundCount 만큼 질문은:
+// 1. 그 라운드의 선플레이어가 이전 게임에서 받았던 질문 제외
+// 2. 그 라운드의 선플레이어가 이번 게임의 이전 라운드에서 받은 질문도 제외
+// 3. 남은 질문 중에서 무작위로 perRoundCount 개 선택
+//
+export function buildGameQuestionPool(playerOrder, perRoundCount, usedQuestionsByPlayer = {}) {
+  const totalRounds = playerOrder.length;
+  const pool = [];
+
+  // 누적 사용 질문 (기존 + 이번 게임 진행 중에 추가)
+  const cumulativeUsed = {};
+  for (const pid in usedQuestionsByPlayer) {
+    cumulativeUsed[pid] = new Set(usedQuestionsByPlayer[pid] || []);
+  }
+  // playerOrder 의 모든 플레이어에 대해 초기화
+  for (const pid of playerOrder) {
+    if (!cumulativeUsed[pid]) cumulativeUsed[pid] = new Set();
+  }
+
+  for (let r = 0; r < totalRounds; r++) {
+    const leadPid = playerOrder[r];
+    const usedSet = cumulativeUsed[leadPid];
+
+    // 사용 가능한 질문 = 전체 질문 - 이 사람이 받은 적 있는 질문
+    let available = QUESTIONS.filter((q) => !usedSet.has(q));
+
+    // 만약 부족하면 (이 사람이 거의 모든 질문을 다 받음) → 사용 이력 초기화 (안전장치)
+    if (available.length < perRoundCount) {
+      cumulativeUsed[leadPid] = new Set();
+      available = [...QUESTIONS];
+    }
+
+    // 셔플 후 perRoundCount 개 추출
+    const shuffled = shuffle(available);
+    const chosen = shuffled.slice(0, perRoundCount);
+
+    // 풀에 추가
+    pool.push(...chosen);
+
+    // 누적 사용 질문에 기록
+    for (const q of chosen) {
+      cumulativeUsed[leadPid].add(q);
+    }
+  }
+
+  // Set → Array 로 변환해서 반환 (Firebase 저장용)
+  const newUsedQuestions = {};
+  for (const pid in cumulativeUsed) {
+    newUsedQuestions[pid] = Array.from(cumulativeUsed[pid]);
+  }
+
+  return { pool, newUsedQuestions };
+}
+
+// 라운드별 카드 추출
+export function buildPyramidFromPool(pool, roundIdx, depth) {
+  const cardCount = getCardCountForDepth(depth);
+  const start = roundIdx * cardCount;
+  const cards = pool.slice(start, start + cardCount);
 
   const levels = [];
   let idx = 0;
@@ -36,7 +124,6 @@ export function createPyramid(depth = 3) {
     }
     levels.push(levelCards);
   }
-
   return {
     depth,
     levels,
@@ -44,9 +131,14 @@ export function createPyramid(depth = 3) {
   };
 }
 
-// 특정 레벨의 카드 인덱스 계산
-// 이전 답변들을 거쳐서 현재 어느 카드까지 왔는지
-// YES → 왼쪽(인덱스 그대로), NO → 오른쪽(인덱스 +1)
+export function buildMachobaFromPool(pool, roundIdx, count) {
+  const start = roundIdx * count;
+  return pool.slice(start, start + count);
+}
+
+// ============================================
+// 게임 진행 유틸 (피라미드)
+// ============================================
 export function getCardIndexAtLevel(answers, targetLevel) {
   if (targetLevel === 1) return 0;
   let idx = 0;
@@ -56,7 +148,6 @@ export function getCardIndexAtLevel(answers, targetLevel) {
   return idx;
 }
 
-// 현재 답변할 차례의 카드
 export function getCurrentQuestion(pyramid) {
   const answers = pyramid.answers || [];
   if (answers.length >= pyramid.depth) return null;
@@ -70,9 +161,6 @@ export function getCurrentQuestion(pyramid) {
   };
 }
 
-// 도착지 - "{최종층인덱스}{Y/N}"
-// 예: depth=3 → 도착지 6개 ("0Y", "0N", "1Y", "1N", "2Y", "2N")
-// 예: depth=4 → 도착지 8개 ("0Y" ~ "3N")
 export function getDestination(answers) {
   if (!answers || answers.length === 0) return null;
   const depth = answers.length;
@@ -81,36 +169,21 @@ export function getDestination(answers) {
   return `${finalIdx}${finalAns === "Y" || finalAns === "YES" ? "Y" : "N"}`;
 }
 
-// 답변 경로로부터 모든 (level, cardIdx) 좌표 반환
-// 시각화에 사용
-export function getPathFromAnswers(answers) {
-  const path = [];
-  for (let lv = 1; lv <= answers.length; lv++) {
-    const cardIdx = getCardIndexAtLevel(answers, lv);
-    path.push({
-      level: lv,
-      cardIndex: cardIdx,
-      answer: answers[lv - 1].answer,
-    });
-  }
-  return path;
-}
-
-// 답변 시퀀스만 추출: ["YES", "NO", "NO"] 형태
 export function getAnswerSequence(answers) {
   return (answers || []).map((a) => a.answer);
 }
 
-// 라운드 수 계산
+// ============================================
+// 라운드 / 플레이어 순서
+// ============================================
 export function calculateTotalRounds(playerCount) {
   if (playerCount >= 5) return playerCount;
   return playerCount * 2;
 }
 
-// 선 플레이어 순서 생성
 export function buildLeadPlayerOrder(playerIds) {
   const totalRounds = calculateTotalRounds(playerIds.length);
-  const shuffled = [...playerIds].sort(() => Math.random() - 0.5);
+  const shuffled = shuffle(playerIds);
   const order = [];
   for (let i = 0; i < totalRounds; i++) {
     order.push(shuffled[i % playerIds.length]);
@@ -118,7 +191,9 @@ export function buildLeadPlayerOrder(playerIds) {
   return order;
 }
 
-// "나를 가장 잘 맞춘 사람" 계산
+// ============================================
+// 소울메이트
+// ============================================
 export function calculateSoulmate(myPlayerId, myLeadRounds, allVotes) {
   if (myLeadRounds.length === 0) {
     return { soulmateIds: [], correctCount: 0, totalCount: 0 };
@@ -155,25 +230,8 @@ export function calculateSoulmate(myPlayerId, myLeadRounds, allVotes) {
 }
 
 // ============================================
-// 마쵸바 모드 (Quiz Mode)
+// 마쵸바
 // ============================================
-// 구조: { count: 5, questions: [q1, q2, q3, q4, q5], leadAnswers: [...], voterAnswers: { [playerId]: [...] } }
-// count: 3, 5, 7 중 하나
-// 라운드 흐름:
-//   1. 5개 질문 동시에 표시
-//   2. 일반 플레이어들이 각 질문에 YES/NO 답변 (선 플레이어 답 예측)
-//   3. 모두 완료되면 선 플레이어가 본인의 진짜 답변 5개 입력
-//   4. 일치한 개수만큼 일반 플레이어에게 점수
-//
-export function createMachobaQuestions(count = 5) {
-  const shuffled = [...QUESTIONS].sort(() => Math.random() - 0.5);
-  return shuffled.slice(0, count);
-}
-
-// 일치한 개수 계산
-// myVote: ["YES", "NO", ...] 일반 플레이어 답변
-// leadAnswers: ["YES", "NO", ...] 선 플레이어 답변
-// 둘 다 같은 인덱스 위치에서 같은 값이면 정답
 export function countMachobaMatches(myVote, leadAnswers) {
   if (!myVote || !leadAnswers) return 0;
   let count = 0;

@@ -13,8 +13,10 @@ import {
   generateRoomCode,
   buildLeadPlayerOrder,
   calculateTotalRounds,
-  createPyramid,
-  createMachobaQuestions,
+  getCardCountForDepth,
+  buildGameQuestionPool,
+  buildPyramidFromPool,
+  buildMachobaFromPool,
   countMachobaMatches,
   getDestination,
   getCurrentQuestion,
@@ -37,7 +39,7 @@ export async function createRoom(nickname) {
   const roomData = {
     code,
     status: "waiting",
-    gameMode: "odiya", // 'odiya' | 'machoba'
+    gameMode: "odiya",
     depth: 3,
     machobaCount: 5,
     currentRound: 0,
@@ -45,6 +47,8 @@ export async function createRoom(nickname) {
     currentLeadPlayerId: null,
     pyramid: null,
     machoba: null,
+    questionPool: null,
+    usedQuestionsByPlayer: null, // { [playerId]: [질문문자열, ...] } - 게임 끝나도 유지
     playerOrder: null,
     createdAt: serverTimestamp(),
     players: {
@@ -131,6 +135,55 @@ export function subscribeRoom(code, callback) {
 }
 
 // ============================================
+// 게임 초기화 헬퍼 (시작 / 리게임 공통)
+// ============================================
+function buildInitialUpdates(room, playerIds) {
+  const gameMode = room.gameMode || "odiya";
+  const order = buildLeadPlayerOrder(playerIds);
+  const totalRounds = calculateTotalRounds(playerIds.length);
+
+  let perRoundCount;
+  if (gameMode === "odiya") {
+    perRoundCount = getCardCountForDepth(room.depth || 3);
+  } else {
+    perRoundCount = room.machobaCount || 5;
+  }
+
+  // 기존 사용 이력 (리게임 시 유지됨)
+  const existingUsed = room.usedQuestionsByPlayer || {};
+
+  // 플레이어별 사용 이력을 고려해서 풀 생성
+  const { pool, newUsedQuestions } = buildGameQuestionPool(order, perRoundCount, existingUsed);
+
+  const updates = {
+    status: "playing",
+    currentRound: 1,
+    totalRounds,
+    currentLeadPlayerId: order[0],
+    playerOrder: order,
+    questionPool: pool,
+    usedQuestionsByPlayer: newUsedQuestions,
+    pyramid: null,
+    machoba: null,
+    votes: null,
+    results: null,
+  };
+
+  if (gameMode === "odiya") {
+    updates.pyramid = buildPyramidFromPool(pool, 0, room.depth || 3);
+  } else {
+    const count = room.machobaCount || 5;
+    updates.machoba = {
+      count,
+      questions: buildMachobaFromPool(pool, 0, count),
+      leadAnswers: null,
+    };
+  }
+
+  return updates;
+}
+
+// ============================================
 // 게임 시작
 // ============================================
 export async function startGame(code) {
@@ -140,39 +193,12 @@ export async function startGame(code) {
   const playerIds = Object.keys(room.players || {});
   if (playerIds.length < 2) return;
 
-  const gameMode = room.gameMode || "odiya";
-  const order = buildLeadPlayerOrder(playerIds);
-  const totalRounds = calculateTotalRounds(playerIds.length);
-
-  const updates = {
-    status: "playing",
-    currentRound: 1,
-    totalRounds,
-    currentLeadPlayerId: order[0],
-    playerOrder: order,
-    pyramid: null,
-    machoba: null,
-    votes: null,
-    results: null,
-  };
-
-  if (gameMode === "odiya") {
-    updates.pyramid = createPyramid(room.depth || 3);
-  } else {
-    // machoba 모드
-    const count = room.machobaCount || 5;
-    updates.machoba = {
-      count,
-      questions: createMachobaQuestions(count),
-      leadAnswers: null, // 선 플레이어가 나중에 입력
-    };
-  }
-
+  const updates = buildInitialUpdates(room, playerIds);
   await update(ref(db, `rooms/${code}`), updates);
 }
 
 // ============================================
-// 리게임 - 같은 멤버로 점수 초기화하고 다시 시작
+// 리게임 (같은 멤버, 점수 0)
 // ============================================
 export async function restartGame(code) {
   const snapshot = await get(ref(db, `rooms/${code}`));
@@ -181,45 +207,15 @@ export async function restartGame(code) {
   const playerIds = Object.keys(room.players || {});
   if (playerIds.length < 2) return;
 
-  const gameMode = room.gameMode || "odiya";
-  const order = buildLeadPlayerOrder(playerIds);
-  const totalRounds = calculateTotalRounds(playerIds.length);
-
-  // 점수 초기화
-  const playerUpdates = {};
+  const updates = buildInitialUpdates(room, playerIds);
   for (const pid of playerIds) {
-    playerUpdates[`players/${pid}/score`] = 0;
+    updates[`players/${pid}/score`] = 0;
   }
-
-  const updates = {
-    ...playerUpdates,
-    status: "playing",
-    currentRound: 1,
-    totalRounds,
-    currentLeadPlayerId: order[0],
-    playerOrder: order,
-    pyramid: null,
-    machoba: null,
-    votes: null,
-    results: null,
-  };
-
-  if (gameMode === "odiya") {
-    updates.pyramid = createPyramid(room.depth || 3);
-  } else {
-    const count = room.machobaCount || 5;
-    updates.machoba = {
-      count,
-      questions: createMachobaQuestions(count),
-      leadAnswers: null,
-    };
-  }
-
   await update(ref(db, `rooms/${code}`), updates);
 }
 
 // ============================================
-// 대기실로 돌아가기 - 모드 변경 등을 위해
+// 대기실 복귀
 // ============================================
 export async function returnToWaiting(code) {
   const snapshot = await get(ref(db, `rooms/${code}`));
@@ -240,6 +236,7 @@ export async function returnToWaiting(code) {
     currentLeadPlayerId: null,
     pyramid: null,
     machoba: null,
+    questionPool: null,
     votes: null,
     results: null,
     playerOrder: null,
@@ -247,7 +244,7 @@ export async function returnToWaiting(code) {
 }
 
 // ============================================
-// 오디야 모드: 투표 (vote = "0Y", "0N" 등)
+// 오디야: 투표
 // ============================================
 export async function submitVote(code, round, playerId, vote) {
   await set(ref(db, `rooms/${code}/votes/${round}/${playerId}`), {
@@ -257,7 +254,7 @@ export async function submitVote(code, round, playerId, vote) {
 }
 
 // ============================================
-// 오디야 모드: 선 플레이어 답변
+// 오디야: 선 플레이어 답변
 // ============================================
 export async function submitAnswer(code, answer) {
   const snapshot = await get(ref(db, `rooms/${code}`));
@@ -290,7 +287,7 @@ export async function submitAnswer(code, answer) {
 }
 
 // ============================================
-// 오디야 모드: 정답 공개
+// 오디야: 정답 공개
 // ============================================
 export async function revealResult(code, round) {
   const snapshot = await get(ref(db, `rooms/${code}`));
@@ -320,8 +317,7 @@ export async function revealResult(code, round) {
 }
 
 // ============================================
-// 마쵸바: 투표자 답변 (배열 통째로)
-// vote = ["YES", "NO", "YES", ...] (count 길이)
+// 마쵸바: 투표자 답변
 // ============================================
 export async function submitMachobaVote(code, round, playerId, voteArray) {
   await set(ref(db, `rooms/${code}/votes/${round}/${playerId}`), {
@@ -331,7 +327,7 @@ export async function submitMachobaVote(code, round, playerId, voteArray) {
 }
 
 // ============================================
-// 마쵸바: 선 플레이어 답변 (배열 통째로)
+// 마쵸바: 선 플레이어 답변
 // ============================================
 export async function submitMachobaLeadAnswers(code, leadAnswers) {
   const snapshot = await get(ref(db, `rooms/${code}`));
@@ -343,7 +339,6 @@ export async function submitMachobaLeadAnswers(code, leadAnswers) {
     leadAnswers,
   });
 
-  // 결과 기록
   await set(ref(db, `rooms/${code}/results/${room.currentRound}`), {
     leadPlayerId: room.currentLeadPlayerId,
     leadAnswers,
@@ -352,7 +347,7 @@ export async function submitMachobaLeadAnswers(code, leadAnswers) {
 }
 
 // ============================================
-// 마쵸바: 정답 공개 (matchCount 계산 + 점수)
+// 마쵸바: 정답 공개
 // ============================================
 export async function revealMachobaResult(code, round) {
   const snapshot = await get(ref(db, `rooms/${code}`));
@@ -382,7 +377,7 @@ export async function revealMachobaResult(code, round) {
 }
 
 // ============================================
-// 다음 라운드
+// 다음 라운드 (questionPool에서 다음 슬라이스 꺼냄)
 // ============================================
 export async function nextRound(code) {
   const snapshot = await get(ref(db, `rooms/${code}`));
@@ -397,20 +392,22 @@ export async function nextRound(code) {
 
   const nextLead = room.playerOrder[nextRoundNum - 1];
   const gameMode = room.gameMode || "odiya";
+  const pool = room.questionPool || [];
 
   const updates = {
     currentRound: nextRoundNum,
     currentLeadPlayerId: nextLead,
   };
 
+  // roundIdx = nextRoundNum - 1 (0-based)
   if (gameMode === "odiya") {
-    updates.pyramid = createPyramid(room.depth || 3);
+    updates.pyramid = buildPyramidFromPool(pool, nextRoundNum - 1, room.depth || 3);
     updates.machoba = null;
   } else {
     const count = room.machobaCount || 5;
     updates.machoba = {
       count,
-      questions: createMachobaQuestions(count),
+      questions: buildMachobaFromPool(pool, nextRoundNum - 1, count),
       leadAnswers: null,
     };
     updates.pyramid = null;

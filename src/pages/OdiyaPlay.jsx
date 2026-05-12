@@ -4,6 +4,7 @@ import {
   getDestination,
   getCardIndexAtLevel,
   getAnswerSequence,
+  josa,
 } from "../lib/game";
 import Avatar from "../components/Avatar";
 import Pyramid from "../components/Pyramid";
@@ -40,62 +41,48 @@ export default function OdiyaPlay({ room, code, myPlayerId, leadPlayer, players 
   const answersLen = (room.pyramid?.answers || []).length;
   // 게임 종료는 라우터(GamePlay)에서 처리
 
+  // 다음 phase 계산 함수 (즉시 호출 가능)
+  function computeNextPhase() {
+    if (currentResult?.revealed) return "reveal";
+    if (answersLen >= depth) return "result";
+    if (isLead) {
+      if (answersLen === 0) {
+        if (submittedVotesCount >= nonLeadCount && nonLeadCount > 0) {
+          return "lead-answering";
+        }
+        return "lead-waiting";
+      }
+      return "lead-answering";
+    }
+    if (myVote) {
+      if (answersLen > 0) return "watching";
+      return "voted-waiting";
+    }
+    return "voting-popup";
+  }
+
   // 라운드 시작 인트로 (라운드 변경 시) - 깜빡임 방지 버전
   useEffect(() => {
     if (room.status !== "playing") return;
-    // 라운드 처음일 때만 intro 표시 (answers 가 0)
     if ((room.pyramid?.answers || []).length === 0) {
       setPhase("intro");
       setMyStepAnswers([]);
       const t = setTimeout(() => {
-        // intro 끝났을 때만 통합 effect 가 동작하도록 살짝 마이크로 phase 사용
-        // pending 상태에서 통합 effect 가 즉시 다음 phase 결정함
-        setPhase("pending");
+        // intro 끝났을 때 즉시 적절한 phase 계산 후 한 번에 set
+        setPhase(computeNextPhase());
       }, 2500);
       return () => clearTimeout(t);
     }
   }, [room.currentRound, room.status]); // eslint-disable-line
 
-  // 통합 phase 결정 - pending 도 처리하도록
+  // 통합 phase 결정 - intro/voting-confirm 동안은 건드리지 않음
   useEffect(() => {
     if (room.status !== "playing") return;
     if (phase === "intro") return;
-    if (phase === "voting-confirm") return; // 확정 버튼 대기
+    if (phase === "voting-confirm") return;
 
-    // 결과 공개됨 → reveal
-    if (currentResult?.revealed) {
-      if (phase !== "reveal") setPhase("reveal");
-      return;
-    }
-
-    // depth 답변 완료 → result
-    if (answersLen >= depth) {
-      if (phase !== "result") setPhase("result");
-      return;
-    }
-
-    if (isLead) {
-      if (answersLen === 0) {
-        if (submittedVotesCount >= nonLeadCount && nonLeadCount > 0) {
-          if (phase !== "lead-answering") setPhase("lead-answering");
-        } else {
-          if (phase !== "lead-waiting") setPhase("lead-waiting");
-        }
-      } else {
-        if (phase !== "lead-answering") setPhase("lead-answering");
-      }
-    } else {
-      if (myVote) {
-        if (answersLen > 0) {
-          // 선 플레이어가 답변 시작 → watching (내 예측 점선 표시)
-          if (phase !== "watching") setPhase("watching");
-        } else {
-          if (phase !== "voted-waiting") setPhase("voted-waiting");
-        }
-      } else {
-        if (phase !== "voting-popup") setPhase("voting-popup");
-      }
-    }
+    const next = computeNextPhase();
+    if (next !== phase) setPhase(next);
   }, [
     phase,
     room.status,
@@ -368,7 +355,7 @@ function RoundIntro({ round, totalRounds, leadPlayer, depth }) {
           maxWidth: 260,
         }}
       >
-        {leadPlayer.nickname}이(가) 어떤 답을 할지<br />모두 함께 맞춰봐요 🎯
+        {josa(leadPlayer.nickname, "이/가")} 어떤 답을 할지<br />모두 함께 맞춰봐요 🎯
       </p>
       <div
         style={{
@@ -411,7 +398,7 @@ function VotingBackground({ leadPlayer, round, totalRounds }) {
       <Header round={round} totalRounds={totalRounds} leadName={leadPlayer?.nickname} mode="vote" />
       <div style={{ textAlign: "center", marginBottom: 14, opacity: 0.4 }}>
         <p style={{ fontSize: 14, fontWeight: 600, color: colors.text1, margin: 0 }}>
-          {leadPlayer?.nickname}이(가) 어디를 선택할지 맞춰보세요
+          {josa(leadPlayer?.nickname || "", "이/가")} 어디를 선택할지 맞춰보세요
         </p>
       </div>
     </div>
@@ -636,7 +623,7 @@ function WatchingScreen({ room, leadPlayer, depth, myAnswers }) {
 
       <div style={{ textAlign: "center", marginBottom: 14 }}>
         <p style={{ fontSize: 14, fontWeight: 700, margin: 0, color: colors.text1 }}>
-          🙈 {leadPlayer?.nickname}가 답하는 중...
+          🙈 {josa(leadPlayer?.nickname || "", "이/가")} 답하는 중...
         </p>
         <p style={{ fontSize: 11, color: colors.text3, margin: "4px 0 0" }}>
           {answersLen} / {depth} 단계 · 점선은 내 예측이에요

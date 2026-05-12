@@ -1,20 +1,17 @@
 import { useState, useEffect, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
 import {
   submitMachobaVote,
   submitMachobaLeadAnswers,
   revealMachobaResult,
   nextRound,
-  leaveRoom,
 } from "../lib/room";
-import { clearPlayer } from "../lib/storage";
+import { josa } from "../lib/game";
 import Avatar from "../components/Avatar";
 import StepPopup from "../components/StepPopup";
 import { colors, radius, shadow, containerStyle } from "../lib/theme";
 
 // 마쵸바 모드 게임 진행
 export default function MachobaPlay({ room, code, myPlayerId, leadPlayer, players, onFinish }) {
-  const navigate = useNavigate();
   const [phase, setPhase] = useState("intro");
   // 단계별 답변 수집 (선플레이어와 투표자 공통)
   const [myStepAnswers, setMyStepAnswers] = useState([]);
@@ -42,14 +39,31 @@ export default function MachobaPlay({ room, code, myPlayerId, leadPlayer, player
   const currentResult = (room.results || {})[room.currentRound];
 
   // ============ Phase 전환 ============
+  function computeNextPhase() {
+    if (currentResult?.revealed) return "reveal";
+    if (isLead) {
+      if (!leadAnswers) {
+        if (submittedVotesCount >= nonLeadCount && nonLeadCount > 0) {
+          return "lead-answering";
+        }
+        return "lead-waiting";
+      }
+      return "result";
+    }
+    if (myVote) {
+      if (leadAnswers) return "result";
+      return "voted-waiting";
+    }
+    return "voting-popup";
+  }
+
   // 라운드 시작 인트로
   useEffect(() => {
     if (room.status !== "playing") return;
-    // 새 라운드일 때만
     if (!leadAnswers && currentVotes.length === 0) {
       setPhase("intro");
       setMyStepAnswers([]);
-      const t = setTimeout(() => setPhase("__active__"), 2500);
+      const t = setTimeout(() => setPhase(computeNextPhase()), 2500);
       return () => clearTimeout(t);
     }
   }, [room.currentRound]); // eslint-disable-line
@@ -58,44 +72,9 @@ export default function MachobaPlay({ room, code, myPlayerId, leadPlayer, player
   useEffect(() => {
     if (room.status !== "playing") return;
     if (phase === "intro") return;
-    if (phase === "voting-confirm" || phase === "lead-confirm") return; // 확정 버튼 대기
-
-    if (currentResult?.revealed) {
-      if (phase !== "reveal") setPhase("reveal");
-      return;
-    }
-
-    if (isLead) {
-      // 선 플레이어: 다른 사람들 투표 기다림 → 본인 답변
-      if (!leadAnswers) {
-        if (submittedVotesCount >= nonLeadCount && nonLeadCount > 0) {
-          // 답변 입력 시작
-          if (phase !== "lead-answering" && phase !== "lead-confirm") {
-            setPhase("lead-answering");
-          }
-        } else {
-          if (phase !== "lead-waiting") setPhase("lead-waiting");
-        }
-      } else {
-        // 답변 완료 → 결과 대기
-        if (phase !== "result") setPhase("result");
-      }
-    } else {
-      // 일반 플레이어
-      if (myVote) {
-        // 내 투표 완료
-        if (leadAnswers) {
-          // 선 플레이어도 답변 완료 → 결과 대기
-          if (phase !== "result") setPhase("result");
-        } else {
-          // 선 플레이어 답변 대기
-          if (phase !== "voted-waiting") setPhase("voted-waiting");
-        }
-      } else {
-        // 투표 시작
-        if (phase !== "voting-popup") setPhase("voting-popup");
-      }
-    }
+    if (phase === "voting-confirm" || phase === "lead-confirm") return;
+    const next = computeNextPhase();
+    if (next !== phase) setPhase(next);
   }, [
     phase, room.status, isLead, leadAnswers, myVote,
     submittedVotesCount, nonLeadCount, currentResult?.revealed,
@@ -150,7 +129,7 @@ export default function MachobaPlay({ room, code, myPlayerId, leadPlayer, player
   }
 
   // ============ 렌더 ============
-  if (phase === "intro" || phase === "__active__") {
+  if (phase === "intro") {
     return <IntroScreen round={room.currentRound} totalRounds={room.totalRounds} leadPlayer={leadPlayer} count={count} />;
   }
 
@@ -272,7 +251,7 @@ function IntroScreen({ round, totalRounds, leadPlayer, count }) {
       </div>
 
       <p style={{ fontSize: 13, color: colors.text2, textAlign: "center", lineHeight: 1.5, margin: "0 0 16px", maxWidth: 280 }}>
-        {leadPlayer.nickname}을(를) 향한 <strong>{count}개</strong>의 질문!<br />
+        {josa(leadPlayer.nickname, "을/를")} 향한 <strong>{count}개</strong>의 질문!<br />
         선 플레이어가 어떻게 답할지 맞춰봐요
       </p>
       <div style={{ fontSize: 11, color: colors.text3 }}>잠시 후 시작합니다...</div>
@@ -293,7 +272,7 @@ function PopupBackground({ leadPlayer, round, totalRounds, isLead }) {
         </span>
       </div>
       <p style={{ textAlign: "center", fontSize: 14, fontWeight: 600 }}>
-        {isLead ? "내 답변 입력 중..." : `${leadPlayer?.nickname}이(가) 어떻게 답할지 예측 중...`}
+        {isLead ? "내 답변 입력 중..." : `${josa(leadPlayer?.nickname || "", "이/가")} 어떻게 답할지 예측 중...`}
       </p>
     </div>
   );
@@ -447,7 +426,7 @@ function VotedWaiting({ round, totalRounds, leadPlayer, questions, myAnswers }) 
       <div style={{ textAlign: "center", marginBottom: 14 }}>
         <div style={{ fontSize: 32, marginBottom: 6 }}>⏳</div>
         <p style={{ fontSize: 14, fontWeight: 700, margin: 0, color: colors.text1 }}>
-          {leadPlayer?.nickname}가 답변 중...
+          {josa(leadPlayer?.nickname || "", "이/가")} 답변 중...
         </p>
         <p style={{ fontSize: 11, color: colors.text3, margin: "4px 0 0" }}>
           내 예측이 얼마나 맞을지 두근두근
@@ -540,6 +519,14 @@ function RevealView({ room, players, leadPlayer, questions, leadAnswers, votes, 
   const myMatchCount = myVote?.matchCount ?? 0;
   const count = questions.length;
 
+  // 각 질문에 대해 YES 누른 사람들 / NO 누른 사람들 집계
+  function getVotersForQuestion(qIdx, answer) {
+    return votes
+      .filter((v) => v.voteArray && v.voteArray[qIdx] === answer)
+      .map((v) => players.find((p) => p.id === v.playerId))
+      .filter(Boolean);
+  }
+
   // 점수 기준 정렬
   const voterResults = [...votes]
     .map((v) => ({
@@ -570,21 +557,25 @@ function RevealView({ room, players, leadPlayer, questions, leadAnswers, votes, 
         )}
       </div>
 
-      {/* 본인 답변 vs 선 플레이어 답변 비교 (선플레이어가 아닐 때만) */}
-      {!isLead && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 12 }}>
-          {questions.map((q, i) => (
-            <AnswerRow
+      {/* 질문별 정답 + 투표자 분포 */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+        {questions.map((q, i) => {
+          const correctAns = leadAnswers[i];
+          const yesVoters = getVotersForQuestion(i, "YES");
+          const noVoters = getVotersForQuestion(i, "NO");
+          return (
+            <QuestionResultRow
               key={i}
               index={i + 1}
               question={q}
-              answer={myAnswers[i]}
-              leadAnswer={leadAnswers[i]}
-              showResult={true}
+              correctAns={correctAns}
+              yesVoters={yesVoters}
+              noVoters={noVoters}
+              myPlayerId={myPlayerId}
             />
-          ))}
-        </div>
-      )}
+          );
+        })}
+      </div>
 
       {/* 점수 표 */}
       <div style={{ padding: "10px 12px", borderRadius: radius.md, background: colors.surface, border: `1px solid ${colors.border1}`, marginBottom: 12 }}>
@@ -635,6 +626,85 @@ function RevealView({ room, players, leadPlayer, questions, leadAnswers, votes, 
       >
         {isLastRound ? "🎊 최종 결과 보기 →" : "▶ 다음 라운드 →"}
       </button>
+    </div>
+  );
+}
+
+// 질문 1개 + 정답 + 양쪽 투표자
+function QuestionResultRow({ index, question, correctAns, yesVoters, noVoters, myPlayerId }) {
+  return (
+    <div style={{
+      padding: "10px 12px",
+      borderRadius: radius.md,
+      background: colors.surface,
+      border: `1px solid ${colors.border1}`,
+    }}>
+      {/* 질문 + 정답 */}
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 8 }}>
+        <span style={{ fontSize: 10, color: colors.text3, fontWeight: 700, minWidth: 14, marginTop: 2 }}>{index}</span>
+        <span style={{ fontSize: 12, color: colors.text1, flex: 1, wordBreak: "keep-all", fontWeight: 600 }}>{question}</span>
+        <span style={{
+          fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 100,
+          background: correctAns === "YES" ? colors.correctFill : colors.wrongFill, color: "#FFFFFF",
+          flexShrink: 0,
+        }}>
+          정답 {correctAns}
+        </span>
+      </div>
+
+      {/* 양쪽 투표자 */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <VoterLine label="YES" type="yes" voters={yesVoters} myPlayerId={myPlayerId} isCorrect={correctAns === "YES"} />
+        <VoterLine label="NO" type="no" voters={noVoters} myPlayerId={myPlayerId} isCorrect={correctAns === "NO"} />
+      </div>
+    </div>
+  );
+}
+
+function VoterLine({ label, type, voters, myPlayerId, isCorrect }) {
+  const color = type === "yes" ? colors.correctFill : colors.wrongFill;
+  const bg = isCorrect ? (type === "yes" ? colors.correctBg : colors.wrongBg) : colors.surface2;
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 8,
+      padding: "4px 8px",
+      borderRadius: radius.sm,
+      background: bg,
+      border: isCorrect ? `1.5px solid ${color}` : "none",
+    }}>
+      <span style={{
+        fontSize: 10, fontWeight: 700,
+        padding: "2px 8px", borderRadius: 100,
+        background: color, color: "#FFFFFF",
+        minWidth: 32, textAlign: "center",
+      }}>
+        {label}
+      </span>
+      {voters.length > 0 ? (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 4, flex: 1 }}>
+          {voters.map((v, i) => {
+            const isMe = v.id === myPlayerId;
+            return (
+              <span key={v.id} style={{
+                fontSize: 11,
+                color: isMe ? color : colors.text1,
+                fontWeight: isMe ? 700 : 500,
+              }}>
+                {v.nickname}{isMe && " (나)"}{i < voters.length - 1 && <span style={{ opacity: 0.3, marginLeft: 4 }}>·</span>}
+              </span>
+            );
+          })}
+        </div>
+      ) : (
+        <span style={{ fontSize: 10, color: colors.text3, fontStyle: "italic" }}>
+          선택자 없음
+        </span>
+      )}
+      {isCorrect && voters.length > 0 && (
+        <span style={{ fontSize: 11, fontWeight: 700, color: type === "yes" ? colors.correctText : colors.wrongFill }}>
+          +{voters.length}
+        </span>
+      )}
     </div>
   );
 }
