@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { colors, radius, shadow } from "../lib/theme";
 
 // 단계별 질문 팝업
@@ -22,14 +22,33 @@ export default function StepPopup({
   isLead,
 }) {
   const [animate, setAnimate] = useState(false);
+  // 연속 클릭 방지 - 답변 직후 짧게 비활성화
+  const [locked, setLocked] = useState(false);
+  const lockTimerRef = useRef(null);
 
   useEffect(() => {
     if (open) {
       setAnimate(false);
+      setLocked(false); // 새 질문이면 다시 활성화
       const t = setTimeout(() => setAnimate(true), 10);
       return () => clearTimeout(t);
     }
   }, [open, question]);
+
+  // unmount 시 타이머 정리
+  useEffect(() => {
+    return () => {
+      if (lockTimerRef.current) clearTimeout(lockTimerRef.current);
+    };
+  }, []);
+
+  function handleAnswer(answer) {
+    if (locked) return;
+    setLocked(true);
+    onAnswer(answer);
+    // 500ms 후 다시 활성화 (다음 질문이 와도 새 질문이면 useEffect가 풀어주지만, 안전장치)
+    lockTimerRef.current = setTimeout(() => setLocked(false), 500);
+  }
 
   if (!open) return null;
 
@@ -154,7 +173,8 @@ export default function StepPopup({
         {/* YES/NO 버튼 */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
           <button
-            onClick={() => onAnswer("YES")}
+            onClick={() => handleAnswer("YES")}
+            disabled={locked}
             style={{
               padding: "14px 6px",
               borderRadius: radius.lg,
@@ -164,14 +184,17 @@ export default function StepPopup({
               fontWeight: 700,
               border: "none",
               boxShadow: "0 2px 0 #0F6E56, 0 3px 8px rgba(29,158,117,0.3)",
-              cursor: "pointer",
+              cursor: locked ? "default" : "pointer",
               fontFamily: "inherit",
+              opacity: locked ? 0.6 : 1,
+              transition: "opacity 0.15s",
             }}
           >
             YES
           </button>
           <button
-            onClick={() => onAnswer("NO")}
+            onClick={() => handleAnswer("NO")}
+            disabled={locked}
             style={{
               padding: "14px 6px",
               borderRadius: radius.lg,
@@ -181,8 +204,10 @@ export default function StepPopup({
               fontWeight: 700,
               border: "none",
               boxShadow: "0 2px 0 #A32D2D, 0 3px 8px rgba(226,75,74,0.3)",
-              cursor: "pointer",
+              cursor: locked ? "default" : "pointer",
               fontFamily: "inherit",
+              opacity: locked ? 0.6 : 1,
+              transition: "opacity 0.15s",
             }}
           >
             NO

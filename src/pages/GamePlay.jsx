@@ -109,9 +109,13 @@ function FinalResult({ players, myPlayerId, results, allVotes, totalRounds, isHo
     .map(([round]) => parseInt(round, 10));
 
   const soulmate = calculateSoulmate(myPlayerId, myLeadRounds, allVotes);
-  const soulmatePlayers = soulmate.soulmateIds
-    .map((id) => players.find((p) => p.id === id))
-    .filter(Boolean);
+  // ranking 에 player 정보 붙이기
+  const soulmateRanking = soulmate.ranking
+    .map((entry) => ({ ...entry, player: players.find((p) => p.id === entry.playerId) }))
+    .filter((entry) => entry.player);
+  const worstEntry = soulmate.worst
+    ? { ...soulmate.worst, player: players.find((p) => p.id === soulmate.worst.playerId) }
+    : null;
 
   return (
     <div style={{ ...containerStyle, padding: "16px 12px 16px", justifyContent: "center" }}>
@@ -152,47 +156,43 @@ function FinalResult({ players, myPlayerId, results, allVotes, totalRounds, isHo
         <div style={{ fontSize: 13, color: colors.cardText, fontWeight: 600 }}>{winner?.score || 0}점 획득</div>
       </div>
 
-      {/* 소울메이트 */}
-      {soulmatePlayers.length > 0 ? (
+      {/* 나를 잘 맞춘 사람 톱3 */}
+      {soulmateRanking.length > 0 ? (
         <div style={{
-          padding: "14px", borderRadius: radius.lg, marginBottom: 14,
+          padding: "14px", borderRadius: radius.lg, marginBottom: 10,
           background: colors.pinkBg, border: `1px solid ${colors.pinkBorder}`,
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
             <span style={{ fontSize: 14 }}>💝</span>
             <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.3, color: colors.pinkText }}>
-              나를 가장 잘 맞춘 사람
+              나를 잘 맞춘 사람 TOP {soulmateRanking.length}
             </span>
-            {soulmatePlayers.length > 1 && (
-              <span style={{
-                fontSize: 10, padding: "2px 7px", borderRadius: 100,
-                background: colors.pinkBorder, color: colors.pinkDeep, fontWeight: 600,
-              }}>
-                동률 {soulmatePlayers.length}명
-              </span>
-            )}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {soulmatePlayers.map((sp) => (
-              <div key={sp.id} style={{ display: "flex", alignItems: "center" }}>
-                <Avatar nickname={sp.nickname} size={36} style={{ marginRight: 12 }} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: colors.pinkDeep }}>
-                    {sp.nickname}
+            {soulmateRanking.map((entry, idx) => {
+              const medals = ["🥇", "🥈", "🥉"];
+              return (
+                <div key={entry.playerId} style={{ display: "flex", alignItems: "center" }}>
+                  <div style={{ fontSize: 20, marginRight: 8, width: 24, textAlign: "center" }}>
+                    {medals[idx] || ""}
                   </div>
-                  <div style={{ fontSize: 11, color: colors.pinkText }}>
-                    {soulmate.totalCount}번 중 {soulmate.correctCount}번 정답 ·{" "}
-                    {Math.round((soulmate.correctCount / soulmate.totalCount) * 100)}%
+                  <Avatar nickname={entry.player.nickname} colorIndex={players.findIndex((p) => p.id === entry.playerId)} size={32} style={{ marginRight: 10 }} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: colors.pinkDeep }}>
+                      {entry.player.nickname}
+                    </div>
+                    <div style={{ fontSize: 10, color: colors.pinkText }}>
+                      {soulmate.totalCount}번 중 {entry.correctCount}번 · {entry.percent}%
+                    </div>
                   </div>
                 </div>
-                <div style={{ fontSize: 22 }}>💞</div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       ) : myLeadRounds.length > 0 ? (
         <div style={{
-          padding: "18px 14px", borderRadius: radius.lg, marginBottom: 14,
+          padding: "18px 14px", borderRadius: radius.lg, marginBottom: 10,
           background: colors.surface, border: `1px dashed ${colors.border2}`,
           textAlign: "center",
         }}>
@@ -203,6 +203,29 @@ function FinalResult({ players, myPlayerId, results, allVotes, totalRounds, isHo
           <div style={{ fontSize: 11, color: colors.text3 }}>당신은 미스터리한 사람!</div>
         </div>
       ) : null}
+
+      {/* 나를 가장 모르는 사람 (꼴찌) - 4명 이상일 때만 */}
+      {worstEntry && worstEntry.player && (
+        <div style={{
+          padding: "10px 14px", borderRadius: radius.lg, marginBottom: 14,
+          background: colors.surface2, border: `1px solid ${colors.border1}`,
+          display: "flex", alignItems: "center", gap: 10,
+        }}>
+          <div style={{ fontSize: 22 }}>🤔</div>
+          <Avatar nickname={worstEntry.player.nickname} colorIndex={players.findIndex((p) => p.id === worstEntry.playerId)} size={28} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: colors.text3, marginBottom: 1 }}>
+              나를 가장 모르는 사람
+            </div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: colors.text1 }}>
+              {worstEntry.player.nickname}
+              <span style={{ fontSize: 10, color: colors.text3, fontWeight: 400, marginLeft: 6 }}>
+                {soulmate.totalCount}번 중 {worstEntry.correctCount}번 · {worstEntry.percent}%
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 순위 */}
       <div style={{ marginBottom: 14 }}>
@@ -226,7 +249,7 @@ function FinalResult({ players, myPlayerId, results, allVotes, totalRounds, isHo
                 }}>
                   {idx + 1}
                 </span>
-                <Avatar nickname={p.nickname} size={28} style={{ marginRight: 10, marginLeft: 4 }} />
+                <Avatar nickname={p.nickname} colorIndex={players.findIndex((pp) => pp.id === p.id)} size={28} style={{ marginRight: 10, marginLeft: 4 }} />
                 <div style={{
                   flex: 1, fontSize: 13, color: colors.text1,
                   fontWeight: isMe ? 700 : 500,

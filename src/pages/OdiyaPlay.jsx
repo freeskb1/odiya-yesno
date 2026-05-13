@@ -132,9 +132,18 @@ export default function OdiyaPlay({ room, code, myPlayerId, leadPlayer, players 
     setVoteSubmitting(false);
   }
 
+  // 재선택 - 처음부터 다시 단계별 답변
+  function handleVoteRetry() {
+    if (voteSubmitting) return;
+    setMyStepAnswers([]);
+    setPhase("voting-popup");
+  }
+
   // 선 플레이어 답변
   async function handleLeadAnswer(answer) {
     if (!isLead) return;
+    // 단계 초과 가드 (연타 시 안전장치)
+    if (answersLen >= depth) return;
     await submitAnswer(code, answer);
   }
 
@@ -155,6 +164,7 @@ export default function OdiyaPlay({ room, code, myPlayerId, leadPlayer, players 
         round={room.currentRound}
         totalRounds={room.totalRounds}
         leadPlayer={leadPlayer}
+        players={players}
         depth={depth}
       />
     );
@@ -202,6 +212,7 @@ export default function OdiyaPlay({ room, code, myPlayerId, leadPlayer, players 
         leadPlayer={leadPlayer}
         myAnswers={myStepAnswers}
         onConfirm={handleVoteConfirm}
+        onRetry={handleVoteRetry}
         submitting={voteSubmitting}
       />
     );
@@ -284,6 +295,7 @@ export default function OdiyaPlay({ room, code, myPlayerId, leadPlayer, players 
         result={currentResult}
         depth={depth}
         myPlayerId={myPlayerId}
+        myAnswers={myStepAnswers}
         onNext={handleReveal}
       />
     );
@@ -316,7 +328,7 @@ export default function OdiyaPlay({ room, code, myPlayerId, leadPlayer, players 
 // ============================================
 // 라운드 인트로
 // ============================================
-function RoundIntro({ round, totalRounds, leadPlayer, depth }) {
+function RoundIntro({ round, totalRounds, leadPlayer, players, depth }) {
   if (!leadPlayer) return null;
   return (
     <div style={{ ...containerStyle, alignItems: "center", justifyContent: "center", padding: 20 }}>
@@ -338,7 +350,7 @@ function RoundIntro({ round, totalRounds, leadPlayer, depth }) {
           boxShadow: shadow.cardLift,
         }}
       >
-        <Avatar nickname={leadPlayer.nickname} size={72} style={{ marginBottom: 12 }} />
+        <Avatar nickname={leadPlayer.nickname} colorIndex={(players || []).findIndex((p) => p.id === leadPlayer.id)} size={72} style={{ marginBottom: 12 }} />
         <div style={{ fontSize: 24, fontWeight: 700, color: colors.accentDeep, marginBottom: 4 }}>
           {leadPlayer.nickname}
         </div>
@@ -425,7 +437,7 @@ function LeadAnsweringBackground({ room, depth }) {
 // ============================================
 // 투표자: 최종 확인 화면
 // ============================================
-function VotingConfirm({ room, leadPlayer, myAnswers, onConfirm, submitting }) {
+function VotingConfirm({ room, leadPlayer, myAnswers, onConfirm, onRetry, submitting }) {
   if (!room.pyramid || !leadPlayer) return null;
   // myAnswers를 포함한 가상의 pyramid를 만들어서 피라미드 컴포넌트에 표시
   const pyramidWithMyPath = {
@@ -453,25 +465,49 @@ function VotingConfirm({ room, leadPlayer, myAnswers, onConfirm, submitting }) {
         <AnswerSequence answers={sequence} targetName={leadPlayer.nickname} />
       </div>
 
-      <button
-        onClick={onConfirm}
-        disabled={submitting}
-        style={{
-          padding: 13,
-          borderRadius: radius.lg,
-          background: `linear-gradient(180deg, ${colors.correctFillLight} 0%, ${colors.correctFill} 100%)`,
-          color: "#FFFFFF",
-          fontSize: 14,
-          fontWeight: 700,
-          border: "none",
-          boxShadow: shadow.button,
-          cursor: submitting ? "default" : "pointer",
-          fontFamily: "inherit",
-          opacity: submitting ? 0.7 : 1,
-        }}
-      >
-        {submitting ? "전송 중..." : "✨ 투표 확정"}
-      </button>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button
+          onClick={onRetry}
+          disabled={submitting}
+          style={{
+            padding: 13,
+            borderRadius: radius.lg,
+            background: colors.surface,
+            color: colors.text2,
+            fontSize: 13,
+            fontWeight: 600,
+            border: `1.5px solid ${colors.border2}`,
+            cursor: submitting ? "default" : "pointer",
+            fontFamily: "inherit",
+            opacity: submitting ? 0.5 : 1,
+            flex: "0 0 auto",
+            paddingLeft: 16,
+            paddingRight: 16,
+          }}
+        >
+          ↩ 다시
+        </button>
+        <button
+          onClick={onConfirm}
+          disabled={submitting}
+          style={{
+            padding: 13,
+            borderRadius: radius.lg,
+            background: `linear-gradient(180deg, ${colors.correctFillLight} 0%, ${colors.correctFill} 100%)`,
+            color: "#FFFFFF",
+            fontSize: 14,
+            fontWeight: 700,
+            border: "none",
+            boxShadow: shadow.button,
+            cursor: submitting ? "default" : "pointer",
+            fontFamily: "inherit",
+            opacity: submitting ? 0.7 : 1,
+            flex: 1,
+          }}
+        >
+          {submitting ? "전송 중..." : "✨ 투표 확정"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -638,7 +674,7 @@ function WatchingScreen({ room, leadPlayer, depth, myAnswers }) {
 // ============================================
 // 결과 정리 (선 플레이어 답변 완료)
 // ============================================
-function ResultView({ room, leadPlayer, result, depth, myPlayerId, onNext }) {
+function ResultView({ room, leadPlayer, result, depth, myPlayerId, myAnswers, onNext }) {
   if (!room.pyramid || !leadPlayer) return null;
   const answers = room.pyramid.answers || [];
   const sequence = getAnswerSequence(answers);
@@ -652,9 +688,18 @@ function ResultView({ room, leadPlayer, result, depth, myPlayerId, onNext }) {
         <p style={{ fontSize: 14, fontWeight: 700, margin: 0, color: colors.text1 }}>
           {isLead ? "✓ 내 답변 완료" : `✓ ${leadPlayer.nickname}의 답변 완료`}
         </p>
+        {!isLead && myAnswers && myAnswers.length > 0 && (
+          <p style={{ fontSize: 10, color: colors.text3, margin: "4px 0 0" }}>
+            점선은 내가 예측한 경로
+          </p>
+        )}
       </div>
 
-      <Pyramid pyramid={room.pyramid} mode="result" />
+      <Pyramid
+        pyramid={room.pyramid}
+        mode={!isLead && myAnswers && myAnswers.length > 0 ? "watching" : "result"}
+        myAnswers={myAnswers}
+      />
 
       <div style={{ marginTop: 14, marginBottom: 14 }}>
         <AnswerSequence
@@ -741,7 +786,7 @@ function RevealView({ room, players, leadPlayer, result, votes, depth, myPlayerI
                     boxShadow: shadow.sm,
                   }}
                 >
-                  <Avatar nickname={player.nickname} size={22} />
+                  <Avatar nickname={player.nickname} colorIndex={players.findIndex((p) => p.id === player.id)} size={22} />
                   <span style={{ fontSize: 12, fontWeight: 600, color: colors.correctDeep }}>
                     {player.nickname}
                   </span>

@@ -82,6 +82,8 @@ export default function MachobaPlay({ room, code, myPlayerId, leadPlayer, player
 
   // ============ 액션 ============
   function handleStepAnswer(answer) {
+    // 단계 초과 가드 (연타 시 안전장치)
+    if (myStepAnswers.length >= count) return;
     const newAnswers = [...myStepAnswers, answer];
     setMyStepAnswers(newAnswers);
     if (newAnswers.length === count) {
@@ -120,6 +122,13 @@ export default function MachobaPlay({ room, code, myPlayerId, leadPlayer, player
     setSubmitting(false);
   }
 
+  // 재선택 - 처음부터 다시
+  function handleRetry() {
+    if (submitting) return;
+    setMyStepAnswers([]);
+    setPhase(isLead ? "lead-answering" : "voting-popup");
+  }
+
   async function handleReveal() {
     await revealMachobaResult(code, room.currentRound);
   }
@@ -130,7 +139,7 @@ export default function MachobaPlay({ room, code, myPlayerId, leadPlayer, player
 
   // ============ 렌더 ============
   if (phase === "intro") {
-    return <IntroScreen round={room.currentRound} totalRounds={room.totalRounds} leadPlayer={leadPlayer} count={count} />;
+    return <IntroScreen round={room.currentRound} totalRounds={room.totalRounds} leadPlayer={leadPlayer} players={players} count={count} />;
   }
 
   if (phase === "lead-waiting" && isLead) {
@@ -169,6 +178,7 @@ export default function MachobaPlay({ room, code, myPlayerId, leadPlayer, player
         myAnswers={myStepAnswers}
         isLead={isLead}
         onConfirm={isLead ? handleLeadConfirm : handleVoteConfirm}
+        onRetry={handleRetry}
         submitting={submitting}
       />
     );
@@ -228,7 +238,7 @@ export default function MachobaPlay({ room, code, myPlayerId, leadPlayer, player
 // ============================================
 // 인트로
 // ============================================
-function IntroScreen({ round, totalRounds, leadPlayer, count }) {
+function IntroScreen({ round, totalRounds, leadPlayer, players, count }) {
   if (!leadPlayer) return null;
   return (
     <div style={{ ...containerStyle, alignItems: "center", justifyContent: "center", padding: 20 }}>
@@ -243,7 +253,7 @@ function IntroScreen({ round, totalRounds, leadPlayer, count }) {
         background: colors.accentBg, border: `2px solid ${colors.accentBorder}`,
         marginBottom: 20, boxShadow: shadow.cardLift,
       }}>
-        <Avatar nickname={leadPlayer.nickname} size={72} style={{ marginBottom: 12 }} />
+        <Avatar nickname={leadPlayer.nickname} colorIndex={(players || []).findIndex((p) => p.id === leadPlayer.id)} size={72} style={{ marginBottom: 12 }} />
         <div style={{ fontSize: 24, fontWeight: 700, color: colors.accentDeep, marginBottom: 4 }}>
           {leadPlayer.nickname}
         </div>
@@ -317,7 +327,7 @@ function WaitingDark({ round, totalRounds, votedCount, totalCount }) {
 // ============================================
 // 최종 확인 (투표자, 선플레이어 공통)
 // ============================================
-function ConfirmView({ round, totalRounds, leadPlayer, questions, myAnswers, isLead, onConfirm, submitting }) {
+function ConfirmView({ round, totalRounds, leadPlayer, questions, myAnswers, isLead, onConfirm, onRetry, submitting }) {
   return (
     <div style={{ ...containerStyle, padding: "14px 12px 16px", justifyContent: "center" }}>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, fontSize: 11, color: colors.text3 }}>
@@ -332,7 +342,7 @@ function ConfirmView({ round, totalRounds, leadPlayer, questions, myAnswers, isL
           {isLead ? "🎯 나의 답변 확인" : `💭 내가 예상한 ${leadPlayer?.nickname}의 답변`}
         </p>
         <p style={{ fontSize: 10, color: colors.text3, margin: "4px 0 0" }}>
-          {isLead ? "맞다면 확정해주세요" : "맞다면 확정해주세요"}
+          맞다면 확정해주세요
         </p>
       </div>
 
@@ -342,20 +352,38 @@ function ConfirmView({ round, totalRounds, leadPlayer, questions, myAnswers, isL
         ))}
       </div>
 
-      <button
-        onClick={onConfirm}
-        disabled={submitting}
-        style={{
-          padding: 13, borderRadius: radius.lg,
-          background: `linear-gradient(180deg, ${colors.correctFillLight} 0%, ${colors.correctFill} 100%)`,
-          color: "#FFFFFF", fontSize: 14, fontWeight: 700,
-          border: "none", boxShadow: shadow.button,
-          cursor: submitting ? "default" : "pointer",
-          fontFamily: "inherit", opacity: submitting ? 0.7 : 1,
-        }}
-      >
-        {submitting ? "전송 중..." : isLead ? "✨ 답변 확정" : "✨ 투표 확정"}
-      </button>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button
+          onClick={onRetry}
+          disabled={submitting}
+          style={{
+            padding: 13, borderRadius: radius.lg,
+            background: colors.surface, color: colors.text2,
+            fontSize: 13, fontWeight: 600,
+            border: `1.5px solid ${colors.border2}`,
+            cursor: submitting ? "default" : "pointer",
+            fontFamily: "inherit", opacity: submitting ? 0.5 : 1,
+            flex: "0 0 auto", paddingLeft: 16, paddingRight: 16,
+          }}
+        >
+          ↩ 다시
+        </button>
+        <button
+          onClick={onConfirm}
+          disabled={submitting}
+          style={{
+            padding: 13, borderRadius: radius.lg,
+            background: `linear-gradient(180deg, ${colors.correctFillLight} 0%, ${colors.correctFill} 100%)`,
+            color: "#FFFFFF", fontSize: 14, fontWeight: 700,
+            border: "none", boxShadow: shadow.button,
+            cursor: submitting ? "default" : "pointer",
+            fontFamily: "inherit", opacity: submitting ? 0.7 : 1,
+            flex: 1,
+          }}
+        >
+          {submitting ? "전송 중..." : isLead ? "✨ 답변 확정" : "✨ 투표 확정"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -585,7 +613,7 @@ function RevealView({ room, players, leadPlayer, questions, leadAnswers, votes, 
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           {voterResults.map((v) => (
             <div key={v.playerId} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
-              <Avatar nickname={v.player.nickname} size={20} />
+              <Avatar nickname={v.player.nickname} colorIndex={players.findIndex((p) => p.id === v.playerId)} size={20} />
               <span style={{ flex: 1, color: colors.text1 }}>{v.player.nickname}</span>
               <span style={{ fontWeight: 700, color: colors.correctText }}>
                 +{v.matchCount || 0}점

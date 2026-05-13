@@ -192,41 +192,49 @@ export function buildLeadPlayerOrder(playerIds) {
 }
 
 // ============================================
-// 소울메이트
+// 소울메이트 (나를 잘 맞춘 사람 톱3 + 꼴찌)
 // ============================================
+// 반환: {
+//   ranking: [{ playerId, correctCount, percent }, ...] (점수 내림차순)
+//   totalCount: 내가 선플레이어였던 라운드 수
+//   worst: { playerId, correctCount, percent } | null (꼴찌, 톱3과 안 겹칠 때만)
+// }
 export function calculateSoulmate(myPlayerId, myLeadRounds, allVotes) {
   if (myLeadRounds.length === 0) {
-    return { soulmateIds: [], correctCount: 0, totalCount: 0 };
+    return { ranking: [], totalCount: 0, worst: null };
   }
 
   const relevant = allVotes.filter(
     (v) => myLeadRounds.includes(v.round) && v.playerId !== myPlayerId
   );
 
+  // 각 플레이어별 정답 횟수
   const counts = {};
   for (const v of relevant) {
     if (counts[v.playerId] === undefined) counts[v.playerId] = 0;
     if (v.isCorrect === true) counts[v.playerId] += 1;
   }
 
-  let maxCorrect = 0;
-  for (const id in counts) {
-    if (counts[id] > maxCorrect) maxCorrect = counts[id];
+  const totalCount = myLeadRounds.length;
+  const allEntries = Object.entries(counts)
+    .map(([playerId, correctCount]) => ({
+      playerId,
+      correctCount,
+      percent: totalCount > 0 ? Math.round((correctCount / totalCount) * 100) : 0,
+    }))
+    .sort((a, b) => b.correctCount - a.correctCount);
+
+  // 상위 3명
+  const ranking = allEntries.slice(0, 3);
+
+  // 꼴찌: 마지막 등수가 톱3에 포함되지 않을 때만 표시
+  // 즉, 4명 이상 있을 때만 의미 있음
+  let worst = null;
+  if (allEntries.length >= 4) {
+    worst = allEntries[allEntries.length - 1];
   }
 
-  if (maxCorrect === 0) {
-    return { soulmateIds: [], correctCount: 0, totalCount: myLeadRounds.length };
-  }
-
-  const soulmateIds = Object.entries(counts)
-    .filter(([, c]) => c === maxCorrect)
-    .map(([id]) => id);
-
-  return {
-    soulmateIds,
-    correctCount: maxCorrect,
-    totalCount: myLeadRounds.length,
-  };
+  return { ranking, totalCount, worst };
 }
 
 // ============================================
@@ -241,16 +249,30 @@ export function countMachobaMatches(myVote, leadAnswers) {
   return count;
 }
 
-// 아바타 색상
+// 아바타 색상 (8개 팔레트)
 const AVATAR_COLORS = [
   "#1D9E75", "#D4537E", "#534AB7", "#BA7517",
   "#1B7AB6", "#A53FAB", "#E27D3D", "#5A8B2F",
 ];
 
+// 닉네임 해시 기반 (fallback)
 export function getAvatarColor(nickname) {
   let hash = 0;
   for (let i = 0; i < nickname.length; i++) {
     hash = (hash * 31 + nickname.charCodeAt(i)) | 0;
   }
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+
+// 위치 인덱스 기반 (방 내 중복 방지)
+export function getAvatarColorByIndex(index) {
+  return AVATAR_COLORS[((index % AVATAR_COLORS.length) + AVATAR_COLORS.length) % AVATAR_COLORS.length];
+}
+
+// players 배열에서 특정 playerId 의 인덱스 찾기
+// players: [{ id, nickname, ... }, ...] (joinedAt 순서대로 정렬되어 있음)
+export function getPlayerIndex(players, playerId) {
+  if (!players || !playerId) return 0;
+  const idx = players.findIndex((p) => p.id === playerId);
+  return idx >= 0 ? idx : 0;
 }

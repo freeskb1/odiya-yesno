@@ -524,7 +524,7 @@ function PlayerList({ players, myPlayerId, showWaitingSlot }) {
         <span style={{ fontSize: 10, color: colors.text3 }}>{players.length}명</span>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-        {players.map((p) => {
+        {players.map((p, idx) => {
           const isMe = p.id === myPlayerId;
           return (
             <div
@@ -540,7 +540,7 @@ function PlayerList({ players, myPlayerId, showWaitingSlot }) {
                 boxShadow: shadow.sm,
               }}
             >
-              <Avatar nickname={p.nickname} size={26} style={{ border: "2px solid white", boxShadow: "0 1px 3px rgba(0,0,0,0.1)" }} />
+              <Avatar nickname={p.nickname} colorIndex={idx} size={26} style={{ border: "2px solid white", boxShadow: "0 1px 3px rgba(0,0,0,0.1)" }} />
               <span style={{ fontSize: 13, color: colors.text1, flex: 1, fontWeight: isMe ? 700 : 500 }}>
                 {p.nickname}
               </span>
