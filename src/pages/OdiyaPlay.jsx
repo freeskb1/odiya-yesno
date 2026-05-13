@@ -132,13 +132,6 @@ export default function OdiyaPlay({ room, code, myPlayerId, leadPlayer, players 
     setVoteSubmitting(false);
   }
 
-  // 재선택 - 처음부터 다시 단계별 답변
-  function handleVoteRetry() {
-    if (voteSubmitting) return;
-    setMyStepAnswers([]);
-    setPhase("voting-popup");
-  }
-
   // 선 플레이어 답변
   async function handleLeadAnswer(answer) {
     if (!isLead) return;
@@ -212,7 +205,6 @@ export default function OdiyaPlay({ room, code, myPlayerId, leadPlayer, players 
         leadPlayer={leadPlayer}
         myAnswers={myStepAnswers}
         onConfirm={handleVoteConfirm}
-        onRetry={handleVoteRetry}
         submitting={voteSubmitting}
       />
     );
@@ -437,7 +429,7 @@ function LeadAnsweringBackground({ room, depth }) {
 // ============================================
 // 투표자: 최종 확인 화면
 // ============================================
-function VotingConfirm({ room, leadPlayer, myAnswers, onConfirm, onRetry, submitting }) {
+function VotingConfirm({ room, leadPlayer, myAnswers, onConfirm, submitting }) {
   if (!room.pyramid || !leadPlayer) return null;
   // myAnswers를 포함한 가상의 pyramid를 만들어서 피라미드 컴포넌트에 표시
   const pyramidWithMyPath = {
@@ -465,49 +457,25 @@ function VotingConfirm({ room, leadPlayer, myAnswers, onConfirm, onRetry, submit
         <AnswerSequence answers={sequence} targetName={leadPlayer.nickname} />
       </div>
 
-      <div style={{ display: "flex", gap: 8 }}>
-        <button
-          onClick={onRetry}
-          disabled={submitting}
-          style={{
-            padding: 13,
-            borderRadius: radius.lg,
-            background: colors.surface,
-            color: colors.text2,
-            fontSize: 13,
-            fontWeight: 600,
-            border: `1.5px solid ${colors.border2}`,
-            cursor: submitting ? "default" : "pointer",
-            fontFamily: "inherit",
-            opacity: submitting ? 0.5 : 1,
-            flex: "0 0 auto",
-            paddingLeft: 16,
-            paddingRight: 16,
-          }}
-        >
-          ↩ 다시
-        </button>
-        <button
-          onClick={onConfirm}
-          disabled={submitting}
-          style={{
-            padding: 13,
-            borderRadius: radius.lg,
-            background: `linear-gradient(180deg, ${colors.correctFillLight} 0%, ${colors.correctFill} 100%)`,
-            color: "#FFFFFF",
-            fontSize: 14,
-            fontWeight: 700,
-            border: "none",
-            boxShadow: shadow.button,
-            cursor: submitting ? "default" : "pointer",
-            fontFamily: "inherit",
-            opacity: submitting ? 0.7 : 1,
-            flex: 1,
-          }}
-        >
-          {submitting ? "전송 중..." : "✨ 투표 확정"}
-        </button>
-      </div>
+      <button
+        onClick={onConfirm}
+        disabled={submitting}
+        style={{
+          padding: 13,
+          borderRadius: radius.lg,
+          background: `linear-gradient(180deg, ${colors.correctFillLight} 0%, ${colors.correctFill} 100%)`,
+          color: "#FFFFFF",
+          fontSize: 14,
+          fontWeight: 700,
+          border: "none",
+          boxShadow: shadow.button,
+          cursor: submitting ? "default" : "pointer",
+          fontFamily: "inherit",
+          opacity: submitting ? 0.7 : 1,
+        }}
+      >
+        {submitting ? "전송 중..." : "✨ 투표 확정"}
+      </button>
     </div>
   );
 }

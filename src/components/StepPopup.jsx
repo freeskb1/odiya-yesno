@@ -29,7 +29,8 @@ export default function StepPopup({
   useEffect(() => {
     if (open) {
       setAnimate(false);
-      setLocked(false); // 새 질문이면 다시 활성화
+      // 새 질문이 와도 lock 상태는 건드리지 않음 (handleAnswer의 setTimeout이 풀어줌)
+      // 그래야 빠른 연타 시 다음 질문에 자동 답변되는 버그 방지
       const t = setTimeout(() => setAnimate(true), 10);
       return () => clearTimeout(t);
     }
@@ -46,8 +47,8 @@ export default function StepPopup({
     if (locked) return;
     setLocked(true);
     onAnswer(answer);
-    // 500ms 후 다시 활성화 (다음 질문이 와도 새 질문이면 useEffect가 풀어주지만, 안전장치)
-    lockTimerRef.current = setTimeout(() => setLocked(false), 500);
+    // 1초 후 다시 활성화 (새 팝업을 인지하고 고민할 충분한 시간)
+    lockTimerRef.current = setTimeout(() => setLocked(false), 1000);
   }
 
   if (!open) return null;

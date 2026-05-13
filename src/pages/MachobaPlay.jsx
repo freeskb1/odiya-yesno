@@ -122,13 +122,6 @@ export default function MachobaPlay({ room, code, myPlayerId, leadPlayer, player
     setSubmitting(false);
   }
 
-  // 재선택 - 처음부터 다시
-  function handleRetry() {
-    if (submitting) return;
-    setMyStepAnswers([]);
-    setPhase(isLead ? "lead-answering" : "voting-popup");
-  }
-
   async function handleReveal() {
     await revealMachobaResult(code, room.currentRound);
   }
@@ -178,7 +171,6 @@ export default function MachobaPlay({ room, code, myPlayerId, leadPlayer, player
         myAnswers={myStepAnswers}
         isLead={isLead}
         onConfirm={isLead ? handleLeadConfirm : handleVoteConfirm}
-        onRetry={handleRetry}
         submitting={submitting}
       />
     );
@@ -327,7 +319,7 @@ function WaitingDark({ round, totalRounds, votedCount, totalCount }) {
 // ============================================
 // 최종 확인 (투표자, 선플레이어 공통)
 // ============================================
-function ConfirmView({ round, totalRounds, leadPlayer, questions, myAnswers, isLead, onConfirm, onRetry, submitting }) {
+function ConfirmView({ round, totalRounds, leadPlayer, questions, myAnswers, isLead, onConfirm, submitting }) {
   return (
     <div style={{ ...containerStyle, padding: "14px 12px 16px", justifyContent: "center" }}>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, fontSize: 11, color: colors.text3 }}>
@@ -352,38 +344,20 @@ function ConfirmView({ round, totalRounds, leadPlayer, questions, myAnswers, isL
         ))}
       </div>
 
-      <div style={{ display: "flex", gap: 8 }}>
-        <button
-          onClick={onRetry}
-          disabled={submitting}
-          style={{
-            padding: 13, borderRadius: radius.lg,
-            background: colors.surface, color: colors.text2,
-            fontSize: 13, fontWeight: 600,
-            border: `1.5px solid ${colors.border2}`,
-            cursor: submitting ? "default" : "pointer",
-            fontFamily: "inherit", opacity: submitting ? 0.5 : 1,
-            flex: "0 0 auto", paddingLeft: 16, paddingRight: 16,
-          }}
-        >
-          ↩ 다시
-        </button>
-        <button
-          onClick={onConfirm}
-          disabled={submitting}
-          style={{
-            padding: 13, borderRadius: radius.lg,
-            background: `linear-gradient(180deg, ${colors.correctFillLight} 0%, ${colors.correctFill} 100%)`,
-            color: "#FFFFFF", fontSize: 14, fontWeight: 700,
-            border: "none", boxShadow: shadow.button,
-            cursor: submitting ? "default" : "pointer",
-            fontFamily: "inherit", opacity: submitting ? 0.7 : 1,
-            flex: 1,
-          }}
-        >
-          {submitting ? "전송 중..." : isLead ? "✨ 답변 확정" : "✨ 투표 확정"}
-        </button>
-      </div>
+      <button
+        onClick={onConfirm}
+        disabled={submitting}
+        style={{
+          padding: 13, borderRadius: radius.lg,
+          background: `linear-gradient(180deg, ${colors.correctFillLight} 0%, ${colors.correctFill} 100%)`,
+          color: "#FFFFFF", fontSize: 14, fontWeight: 700,
+          border: "none", boxShadow: shadow.button,
+          cursor: submitting ? "default" : "pointer",
+          fontFamily: "inherit", opacity: submitting ? 0.7 : 1,
+        }}
+      >
+        {submitting ? "전송 중..." : isLead ? "✨ 답변 확정" : "✨ 투표 확정"}
+      </button>
     </div>
   );
 }
