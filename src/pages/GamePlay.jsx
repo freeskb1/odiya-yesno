@@ -24,20 +24,27 @@ export default function GamePlay({ room, code, myPlayerId }) {
   const allVotes = useMemo(() => {
     const out = [];
     const v = room.votes || {};
+    const results = room.results || {};
     for (const round in v) {
       const r = parseInt(round, 10);
+      const result = results[r];
+      // 라운드의 마쵸바 문제 수 (있으면)
+      const machobaCount = result?.questions?.length || 0;
       for (const pid in v[round]) {
         const voteData = v[round][pid];
         out.push({
           round: r,
           playerId: pid,
-          // 오디야 모드는 isCorrect, 마쵸바 모드는 matchCount > 0 로 판단
-          isCorrect: voteData.isCorrect === true || (voteData.matchCount > 0),
+          // 오디야: isCorrect (true/false) — 라운드 1개 = 1문제로 카운트
+          // 마쵸바: matchCount (0~N), totalQuestions (라운드 내 총 문제 수)
+          isCorrect: voteData.isCorrect === true,
+          matchCount: typeof voteData.matchCount === "number" ? voteData.matchCount : null,
+          totalQuestions: machobaCount,
         });
       }
     }
     return out;
-  }, [room.votes]);
+  }, [room.votes, room.results]);
 
   async function handleLeaveFinal() {
     if (players.find((p) => p.id === myPlayerId)) {
@@ -182,7 +189,7 @@ function FinalResult({ players, myPlayerId, results, allVotes, totalRounds, isHo
                       {entry.player.nickname}
                     </div>
                     <div style={{ fontSize: 10, color: colors.pinkText }}>
-                      {soulmate.totalCount}번 중 {entry.correctCount}번 · {entry.percent}%
+                      {entry.total}개 중 {entry.correctCount}개 · {entry.percent}%
                     </div>
                   </div>
                 </div>
@@ -220,7 +227,7 @@ function FinalResult({ players, myPlayerId, results, allVotes, totalRounds, isHo
             <div style={{ fontSize: 12, fontWeight: 600, color: colors.text1 }}>
               {worstEntry.player.nickname}
               <span style={{ fontSize: 10, color: colors.text3, fontWeight: 400, marginLeft: 6 }}>
-                {soulmate.totalCount}번 중 {worstEntry.correctCount}번 · {worstEntry.percent}%
+                {worstEntry.total}개 중 {worstEntry.correctCount}개 · {worstEntry.percent}%
               </span>
             </div>
           </div>

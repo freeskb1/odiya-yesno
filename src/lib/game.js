@@ -195,9 +195,9 @@ export function buildLeadPlayerOrder(playerIds) {
 // 소울메이트 (나를 잘 맞춘 사람 톱3 + 꼴찌)
 // ============================================
 // 반환: {
-//   ranking: [{ playerId, correctCount, percent }, ...] (점수 내림차순)
-//   totalCount: 내가 선플레이어였던 라운드 수
-//   worst: { playerId, correctCount, percent } | null (꼴찌, 톱3과 안 겹칠 때만)
+//   ranking: [{ playerId, correctCount, total, percent }, ...] (점수 내림차순)
+//   totalCount: 합산 분모 (오디야: 라운드 수, 마쵸바: 총 문제 수)
+//   worst: { ... } | null (4명 이상일 때만)
 // }
 export function calculateSoulmate(myPlayerId, myLeadRounds, allVotes) {
   if (myLeadRounds.length === 0) {
@@ -208,32 +208,70 @@ export function calculateSoulmate(myPlayerId, myLeadRounds, allVotes) {
     (v) => myLeadRounds.includes(v.round) && v.playerId !== myPlayerId
   );
 
-  // 각 플레이어별 정답 횟수
-  const counts = {};
+  // 마쵸바 모드 여부 판단: matchCount 가 있으면 마쵸바
+  const isMachoba = relevant.some((v) => typeof v.matchCount === "number");
+
+  // 플레이어별 합산
+  // 마쵸바: matchCount 누적 / 전체 문제 수 누적
+  // 오디야: isCorrect true 횟수 / 라운드 수
+  const playerStats = {}; // { pid: { correct, total } }
+
+  if (isMachoba) {
+    // 라운드별 문제 수 매핑
+    const roundQuestions = {};
+    for (const v of relevant) {
+      if (v.totalQuestions > 0) {
+        roundQuestions[v.round] = v.totalQuestions;
+      }
+    }
+    // 내가 선플레이어였던 라운드의 총 문제 수
+    let totalQuestionsSum = 0;
+    for (const round of myLeadRounds) {
+      totalQuestionsSum += roundQuestions[round] || 0;
+    }
+
+    for (const v of relevant) {
+      if (!playerStats[v.playerId]) {
+        playerStats[v.playerId] = { correct: 0, total: totalQuestionsSum };
+      }
+      playerStats[v.playerId].correct += (v.matchCount || 0);
+    }
+
+    const totalCount = totalQuestionsSum;
+    const allEntries = Object.entries(playerStats)
+      .map(([playerId, stat]) => ({
+        playerId,
+        correctCount: stat.correct,
+        total: stat.total,
+        percent: stat.total > 0 ? Math.round((stat.correct / stat.total) * 100) : 0,
+      }))
+      .sort((a, b) => b.correctCount - a.correctCount);
+
+    const ranking = allEntries.slice(0, 3);
+    const worst = allEntries.length >= 4 ? allEntries[allEntries.length - 1] : null;
+    return { ranking, totalCount, worst };
+  }
+
+  // 오디야 모드
   for (const v of relevant) {
-    if (counts[v.playerId] === undefined) counts[v.playerId] = 0;
-    if (v.isCorrect === true) counts[v.playerId] += 1;
+    if (!playerStats[v.playerId]) {
+      playerStats[v.playerId] = { correct: 0, total: myLeadRounds.length };
+    }
+    if (v.isCorrect === true) playerStats[v.playerId].correct += 1;
   }
 
   const totalCount = myLeadRounds.length;
-  const allEntries = Object.entries(counts)
-    .map(([playerId, correctCount]) => ({
+  const allEntries = Object.entries(playerStats)
+    .map(([playerId, stat]) => ({
       playerId,
-      correctCount,
-      percent: totalCount > 0 ? Math.round((correctCount / totalCount) * 100) : 0,
+      correctCount: stat.correct,
+      total: stat.total,
+      percent: stat.total > 0 ? Math.round((stat.correct / stat.total) * 100) : 0,
     }))
     .sort((a, b) => b.correctCount - a.correctCount);
 
-  // 상위 3명
   const ranking = allEntries.slice(0, 3);
-
-  // 꼴찌: 마지막 등수가 톱3에 포함되지 않을 때만 표시
-  // 즉, 4명 이상 있을 때만 의미 있음
-  let worst = null;
-  if (allEntries.length >= 4) {
-    worst = allEntries[allEntries.length - 1];
-  }
-
+  const worst = allEntries.length >= 4 ? allEntries[allEntries.length - 1] : null;
   return { ranking, totalCount, worst };
 }
 
