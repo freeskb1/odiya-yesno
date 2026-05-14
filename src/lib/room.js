@@ -184,6 +184,8 @@ function buildInitialUpdates(room, playerIds) {
       results: null,
       readyState: null,
       neomoyaFunAnswers: null,
+    neomoyaProgress: null,
+      neomoyaProgress: null,
     };
   }
 
@@ -204,6 +206,7 @@ function buildInitialUpdates(room, playerIds) {
     results: null,
     readyState: null,
     neomoyaFunAnswers: null,
+    neomoyaProgress: null,
   };
 
   if (gameMode === "odiya") {
@@ -302,6 +305,7 @@ export async function returnToWaiting(code) {
     playerOrder: null,
     readyState: null,
     neomoyaFunAnswers: null,
+    neomoyaProgress: null,
   });
 }
 
@@ -501,6 +505,14 @@ export async function markReady(code, round, readyKey, playerId) {
 // 준비 상태 초기화 (라운드 넘어갈 때)
 export async function clearReadyState(code, round) {
   await remove(ref(db, `rooms/${code}/readyState/${round}`));
+}
+
+// ============================================
+// 너모야 - 진행도 표시 (몇 번째 시나리오까지 답했는지)
+// ============================================
+// phase별로 분리: "fun" | "score-vote" | "score-lead"
+export async function updateNeomoyaProgress(code, round, playerId, progressKey, current) {
+  await set(ref(db, `rooms/${code}/neomoyaProgress/${round}/${progressKey}/${playerId}`), current);
 }
 
 // ============================================

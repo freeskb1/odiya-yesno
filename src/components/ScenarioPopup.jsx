@@ -46,7 +46,7 @@ export default function ScenarioPopup({
         style={{
           position: "fixed",
           inset: 0,
-          background: "rgba(0,0,0,0.45)",
+          background: "rgba(40,30,20,0.78)",
           backdropFilter: "blur(2px)",
           opacity: animate ? 1 : 0,
           transition: "opacity 0.25s",
@@ -69,7 +69,7 @@ export default function ScenarioPopup({
           maxWidth: 380,
           maxHeight: "calc(100vh - 32px)",
           overflowY: "auto",
-          background: `linear-gradient(180deg, ${colors.surface} 0%, ${colors.bg} 100%)`,
+          background: colors.cardBg,
           border: `2px solid ${colors.cardBorderDeep}`,
           borderRadius: radius.xl,
           padding: "22px 18px 18px",
@@ -111,7 +111,7 @@ export default function ScenarioPopup({
           style={{
             padding: "14px 14px",
             borderRadius: radius.lg,
-            background: colors.bg,
+            background: colors.surface,
             border: `1px solid ${colors.border1}`,
             marginBottom: 14,
           }}
@@ -129,7 +129,7 @@ export default function ScenarioPopup({
           </p>
         </div>
 
-        {/* A/B 버튼 - 세로 */}
+        {/* A/B 버튼 - 세로 (중립 색상, 정답/오답 느낌 제거) */}
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <button
             onClick={() => handleAnswer("A")}
@@ -137,12 +137,12 @@ export default function ScenarioPopup({
             style={{
               padding: "14px 12px",
               borderRadius: radius.lg,
-              background: `linear-gradient(180deg, ${colors.correctFillLight} 0%, ${colors.correctFill} 100%)`,
-              color: "#FFFFFF",
+              background: colors.surface,
+              color: colors.text1,
               fontSize: 14,
               fontWeight: 700,
-              border: "none",
-              boxShadow: "0 2px 0 #0F6E56, 0 3px 8px rgba(29,158,117,0.3)",
+              border: `2px solid ${colors.border2}`,
+              boxShadow: shadow.sm,
               cursor: locked ? "default" : "pointer",
               fontFamily: "inherit",
               opacity: locked ? 0.6 : 1,
@@ -154,10 +154,11 @@ export default function ScenarioPopup({
             }}
           >
             <span style={{
-              fontSize: 12,
+              fontSize: 13,
               fontWeight: 800,
-              background: "rgba(255,255,255,0.25)",
-              padding: "2px 9px",
+              background: colors.accentBg,
+              color: colors.accentDeep,
+              padding: "3px 11px",
               borderRadius: 100,
               flexShrink: 0,
             }}>
@@ -172,12 +173,12 @@ export default function ScenarioPopup({
             style={{
               padding: "14px 12px",
               borderRadius: radius.lg,
-              background: `linear-gradient(180deg, ${colors.wrongFillLight} 0%, ${colors.wrongFill} 100%)`,
-              color: "#FFFFFF",
+              background: colors.surface,
+              color: colors.text1,
               fontSize: 14,
               fontWeight: 700,
-              border: "none",
-              boxShadow: "0 2px 0 #A32D2D, 0 3px 8px rgba(226,75,74,0.3)",
+              border: `2px solid ${colors.border2}`,
+              boxShadow: shadow.sm,
               cursor: locked ? "default" : "pointer",
               fontFamily: "inherit",
               opacity: locked ? 0.6 : 1,
@@ -189,10 +190,11 @@ export default function ScenarioPopup({
             }}
           >
             <span style={{
-              fontSize: 12,
+              fontSize: 13,
               fontWeight: 800,
-              background: "rgba(255,255,255,0.25)",
-              padding: "2px 9px",
+              background: colors.accentBg,
+              color: colors.accentDeep,
+              padding: "3px 11px",
               borderRadius: 100,
               flexShrink: 0,
             }}>
