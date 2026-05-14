@@ -6,6 +6,7 @@ import { clearPlayer } from "../lib/storage";
 import Avatar from "../components/Avatar";
 import OdiyaPlay from "./OdiyaPlay";
 import MachobaPlay from "./MachobaPlay";
+import NeomoyaPlay from "./NeomoyaPlay";
 import { colors, radius, shadow, containerStyle } from "../lib/theme";
 
 export default function GamePlay({ room, code, myPlayerId }) {
@@ -64,6 +65,25 @@ export default function GamePlay({ room, code, myPlayerId }) {
 
   // 게임 종료 → 최종 결과
   if (room.status === "finished") {
+    // 너모야 재미 모드는 자체 결과 화면 사용
+    if (room.gameMode === "neomoya" && room.neomoyaSubMode === "fun") {
+      return (
+        <NeomoyaPlay
+          room={room}
+          code={code}
+          myPlayerId={myPlayerId}
+          leadPlayer={null}
+          players={players}
+          onFinish={async () => {
+            if (players.find((p) => p.id === myPlayerId)) {
+              await leaveRoom(code, myPlayerId);
+            }
+            clearPlayer();
+            navigate("/", { replace: true });
+          }}
+        />
+      );
+    }
     return (
       <FinalResult
         players={players}
@@ -89,6 +109,25 @@ export default function GamePlay({ room, code, myPlayerId }) {
         myPlayerId={myPlayerId}
         leadPlayer={leadPlayer}
         players={players}
+      />
+    );
+  }
+
+  if (gameMode === "neomoya") {
+    return (
+      <NeomoyaPlay
+        room={room}
+        code={code}
+        myPlayerId={myPlayerId}
+        leadPlayer={leadPlayer}
+        players={players}
+        onFinish={async () => {
+          if (players.find((p) => p.id === myPlayerId)) {
+            await leaveRoom(code, myPlayerId);
+          }
+          clearPlayer();
+          navigate("/", { replace: true });
+        }}
       />
     );
   }

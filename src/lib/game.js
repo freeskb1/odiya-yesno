@@ -1,4 +1,5 @@
 import { QUESTIONS } from "./questions";
+import { SCENARIOS } from "./scenarios";
 
 // ============================================
 // 한국어 조사 처리 유틸
@@ -176,13 +177,14 @@ export function getAnswerSequence(answers) {
 // ============================================
 // 라운드 / 플레이어 순서
 // ============================================
-export function calculateTotalRounds(playerCount) {
-  if (playerCount >= 5) return playerCount;
-  return playerCount * 2;
+// rounds: 1, 2, 3 (바퀴 수)
+// 인원수 × rounds = 총 라운드 수
+export function calculateTotalRounds(playerCount, rounds = 2) {
+  return playerCount * rounds;
 }
 
-export function buildLeadPlayerOrder(playerIds) {
-  const totalRounds = calculateTotalRounds(playerIds.length);
+export function buildLeadPlayerOrder(playerIds, rounds = 2) {
+  const totalRounds = calculateTotalRounds(playerIds.length, rounds);
   const shuffled = shuffle(playerIds);
   const order = [];
   for (let i = 0; i < totalRounds; i++) {
@@ -313,4 +315,153 @@ export function getPlayerIndex(players, playerId) {
   if (!players || !playerId) return 0;
   const idx = players.findIndex((p) => p.id === playerId);
   return idx >= 0 ? idx : 0;
+}
+
+// ============================================
+// 너모야 모드
+// ============================================
+
+// 시나리오 풀 생성 (점수 모드 - 플레이어별 사용 이력 추적)
+// playerOrder, perRoundCount: 마쵸바와 동일
+// usedScenariosByPlayer: { [playerId]: [scenario문자열, ...] }
+// 반환: { pool: [{scenario, optionA, optionB}, ...], newUsed: {...} }
+export function buildNeomoyaScorePool(playerOrder, perRoundCount, usedScenariosByPlayer = {}) {
+  const totalRounds = playerOrder.length;
+  const pool = [];
+
+  const cumulativeUsed = {};
+  for (const pid in usedScenariosByPlayer) {
+    cumulativeUsed[pid] = new Set(usedScenariosByPlayer[pid] || []);
+  }
+  for (const pid of playerOrder) {
+    if (!cumulativeUsed[pid]) cumulativeUsed[pid] = new Set();
+  }
+
+  for (let r = 0; r < totalRounds; r++) {
+    const leadPid = playerOrder[r];
+    const usedSet = cumulativeUsed[leadPid];
+
+    let available = SCENARIOS.filter((s) => !usedSet.has(s.scenario));
+    if (available.length < perRoundCount) {
+      cumulativeUsed[leadPid] = new Set();
+      available = [...SCENARIOS];
+    }
+
+    const shuffled = shuffle(available);
+    const chosen = shuffled.slice(0, perRoundCount);
+    pool.push(...chosen);
+
+    for (const s of chosen) {
+      cumulativeUsed[leadPid].add(s.scenario);
+    }
+  }
+
+  const newUsed = {};
+  for (const pid in cumulativeUsed) {
+    newUsed[pid] = Array.from(cumulativeUsed[pid]);
+  }
+
+  return { pool, newUsed };
+}
+
+// 재미 모드: 방 단위 사용 이력만 (선플레이어 없으니 플레이어별 X)
+// 반환: { pool, newUsed: [scenario문자열, ...] }
+export function buildNeomoyaFunPool(count, usedScenarios = []) {
+  const usedSet = new Set(usedScenarios);
+  let available = SCENARIOS.filter((s) => !usedSet.has(s.scenario));
+  if (available.length < count) {
+    available = [...SCENARIOS]; // 안전장치
+  }
+  const shuffled = shuffle(available);
+  const chosen = shuffled.slice(0, count);
+  const newUsed = [...usedScenarios, ...chosen.map((s) => s.scenario)];
+  return { pool: chosen, newUsed };
+}
+
+// 점수 모드 - 라운드별 시나리오 추출
+export function buildNeomoyaScoreFromPool(pool, roundIdx, count) {
+  const start = roundIdx * count;
+  return pool.slice(start, start + count);
+}
+
+// 마쵸바 일치 계산을 시나리오 답에 그대로 사용 가능
+// (countMachobaMatches 재사용)
+
+// ============================================
+// 너모야 재미 모드 - 통계 집계
+// ============================================
+// allAnswers: [{ playerId, answers: ["A", "B", ...] }, ...]
+// 반환: {
+//   soulmatePairs: [{ p1, p2, matchCount, total }, ...] 내림차순 톱3
+//   oppositePairs: [{ p1, p2, matchCount, total }, ...] 오름차순 톱3
+//   mostUnique: { playerId, count } | null
+//   divisiveQuestions: [{ scenarioIdx, aCount, bCount }, ...] 톱3 (가장 갈린 순)
+// }
+export function calculateFunModeStats(allAnswers, scenarios) {
+  const players = allAnswers.map((a) => a.playerId);
+  const total = scenarios.length;
+
+  // 모든 2인 조합의 일치율
+  const pairs = [];
+  for (let i = 0; i < players.length; i++) {
+    for (let j = i + 1; j < players.length; j++) {
+      const aAns = allAnswers[i].answers;
+      const bAns = allAnswers[j].answers;
+      let matchCount = 0;
+      for (let k = 0; k < total; k++) {
+        if (aAns[k] && bAns[k] && aAns[k] === bAns[k]) matchCount++;
+      }
+      pairs.push({
+        p1: players[i],
+        p2: players[j],
+        matchCount,
+        total,
+      });
+    }
+  }
+
+  // 단짝 톱3 (일치율 내림차순)
+  const soulmatePairs = [...pairs].sort((a, b) => b.matchCount - a.matchCount).slice(0, 3);
+  // 정반대 영혼 톱3 (일치율 오름차순)
+  const oppositePairs = [...pairs].sort((a, b) => a.matchCount - b.matchCount).slice(0, 3);
+
+  // 가장 독특한 사람 - 혼자만 다른 답 고른 횟수
+  const uniqueCount = {};
+  for (const pid of players) uniqueCount[pid] = 0;
+  for (let k = 0; k < total; k++) {
+    const votesA = allAnswers.filter((a) => a.answers[k] === "A").map((a) => a.playerId);
+    const votesB = allAnswers.filter((a) => a.answers[k] === "B").map((a) => a.playerId);
+    if (votesA.length === 1 && votesB.length >= 1) {
+      uniqueCount[votesA[0]] += 1;
+    }
+    if (votesB.length === 1 && votesA.length >= 1) {
+      uniqueCount[votesB[0]] += 1;
+    }
+  }
+  let mostUnique = null;
+  let maxUnique = 0;
+  for (const pid in uniqueCount) {
+    if (uniqueCount[pid] > maxUnique) {
+      maxUnique = uniqueCount[pid];
+      mostUnique = { playerId: pid, count: uniqueCount[pid] };
+    }
+  }
+  if (maxUnique === 0) mostUnique = null;
+
+  // 호불호 갈린 시나리오 톱3 (50:50에 가장 가까운 순)
+  const divisive = [];
+  for (let k = 0; k < total; k++) {
+    const votesA = allAnswers.filter((a) => a.answers[k] === "A").length;
+    const votesB = allAnswers.filter((a) => a.answers[k] === "B").length;
+    const diff = Math.abs(votesA - votesB);
+    divisive.push({ scenarioIdx: k, aCount: votesA, bCount: votesB, diff });
+  }
+  const divisiveQuestions = divisive.sort((a, b) => a.diff - b.diff).slice(0, 3);
+
+  return {
+    soulmatePairs,
+    oppositePairs,
+    mostUnique,
+    divisiveQuestions,
+  };
 }

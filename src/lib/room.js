@@ -17,6 +17,9 @@ import {
   buildGameQuestionPool,
   buildPyramidFromPool,
   buildMachobaFromPool,
+  buildNeomoyaScorePool,
+  buildNeomoyaFunPool,
+  buildNeomoyaScoreFromPool,
   countMachobaMatches,
   getDestination,
   getCurrentQuestion,
@@ -40,15 +43,21 @@ export async function createRoom(nickname) {
     code,
     status: "waiting",
     gameMode: "odiya",
+    neomoyaSubMode: "score", // "score" or "fun"
     depth: 3,
     machobaCount: 5,
+    neomoyaCount: 5, // 5, 10, 15
+    rounds: 2, // 1, 2, 3 바퀴 (오디야/마쵸바/너모야점수 모드)
     currentRound: 0,
     totalRounds: 0,
     currentLeadPlayerId: null,
     pyramid: null,
     machoba: null,
+    neomoya: null,
     questionPool: null,
-    usedQuestionsByPlayer: null, // { [playerId]: [질문문자열, ...] } - 게임 끝나도 유지
+    usedQuestionsByPlayer: null,
+    usedScenariosByPlayer: null, // 너모야 점수 모드용
+    usedScenariosFun: null, // 너모야 재미 모드용 (방 단위)
     playerOrder: null,
     createdAt: serverTimestamp(),
     players: {
@@ -110,6 +119,15 @@ export async function updateGameMode(code, gameMode) {
 export async function updateMachobaCount(code, machobaCount) {
   await update(ref(db, `rooms/${code}`), { machobaCount });
 }
+export async function updateNeomoyaSubMode(code, neomoyaSubMode) {
+  await update(ref(db, `rooms/${code}`), { neomoyaSubMode });
+}
+export async function updateNeomoyaCount(code, neomoyaCount) {
+  await update(ref(db, `rooms/${code}`), { neomoyaCount });
+}
+export async function updateRounds(code, rounds) {
+  await update(ref(db, `rooms/${code}`), { rounds });
+}
 
 // ============================================
 // 방 떠나기
@@ -139,21 +157,37 @@ export function subscribeRoom(code, callback) {
 // ============================================
 function buildInitialUpdates(room, playerIds) {
   const gameMode = room.gameMode || "odiya";
-  const order = buildLeadPlayerOrder(playerIds);
-  const totalRounds = calculateTotalRounds(playerIds.length);
+  const rounds = room.rounds || 2; // 1/2/3바퀴
 
-  let perRoundCount;
-  if (gameMode === "odiya") {
-    perRoundCount = getCardCountForDepth(room.depth || 3);
-  } else {
-    perRoundCount = room.machobaCount || 5;
+  // 너모야 재미 모드는 라운드 시스템 없음
+  if (gameMode === "neomoya" && room.neomoyaSubMode === "fun") {
+    const count = room.neomoyaCount || 5;
+    const existingUsedFun = room.usedScenariosFun || [];
+    const { pool, newUsed } = buildNeomoyaFunPool(count, existingUsedFun);
+
+    return {
+      status: "playing",
+      currentRound: 1,
+      totalRounds: 1, // 재미 모드는 단일 세션
+      currentLeadPlayerId: null,
+      playerOrder: null,
+      questionPool: null,
+      neomoya: {
+        subMode: "fun",
+        count,
+        scenarios: pool, // 한 번에 모든 시나리오 노출 (인덱스별)
+      },
+      usedScenariosFun: newUsed,
+      pyramid: null,
+      machoba: null,
+      votes: null,
+      results: null,
+    };
   }
 
-  // 기존 사용 이력 (리게임 시 유지됨)
-  const existingUsed = room.usedQuestionsByPlayer || {};
-
-  // 플레이어별 사용 이력을 고려해서 풀 생성
-  const { pool, newUsedQuestions } = buildGameQuestionPool(order, perRoundCount, existingUsed);
+  // 선플레이어 있는 모드 (오디야/마쵸바/너모야 점수)
+  const order = buildLeadPlayerOrder(playerIds, rounds);
+  const totalRounds = calculateTotalRounds(playerIds.length, rounds);
 
   const updates = {
     status: "playing",
@@ -161,21 +195,42 @@ function buildInitialUpdates(room, playerIds) {
     totalRounds,
     currentLeadPlayerId: order[0],
     playerOrder: order,
-    questionPool: pool,
-    usedQuestionsByPlayer: newUsedQuestions,
     pyramid: null,
     machoba: null,
+    neomoya: null,
     votes: null,
     results: null,
   };
 
   if (gameMode === "odiya") {
+    const perRoundCount = getCardCountForDepth(room.depth || 3);
+    const existingUsed = room.usedQuestionsByPlayer || {};
+    const { pool, newUsedQuestions } = buildGameQuestionPool(order, perRoundCount, existingUsed);
+    updates.questionPool = pool;
+    updates.usedQuestionsByPlayer = newUsedQuestions;
     updates.pyramid = buildPyramidFromPool(pool, 0, room.depth || 3);
-  } else {
-    const count = room.machobaCount || 5;
+  } else if (gameMode === "machoba") {
+    const perRoundCount = room.machobaCount || 5;
+    const existingUsed = room.usedQuestionsByPlayer || {};
+    const { pool, newUsedQuestions } = buildGameQuestionPool(order, perRoundCount, existingUsed);
+    updates.questionPool = pool;
+    updates.usedQuestionsByPlayer = newUsedQuestions;
     updates.machoba = {
-      count,
-      questions: buildMachobaFromPool(pool, 0, count),
+      count: perRoundCount,
+      questions: buildMachobaFromPool(pool, 0, perRoundCount),
+      leadAnswers: null,
+    };
+  } else if (gameMode === "neomoya") {
+    // 점수 모드
+    const perRoundCount = room.neomoyaCount || 5;
+    const existingUsed = room.usedScenariosByPlayer || {};
+    const { pool, newUsed } = buildNeomoyaScorePool(order, perRoundCount, existingUsed);
+    updates.questionPool = pool;
+    updates.usedScenariosByPlayer = newUsed;
+    updates.neomoya = {
+      subMode: "score",
+      count: perRoundCount,
+      scenarios: buildNeomoyaScoreFromPool(pool, 0, perRoundCount),
       leadAnswers: null,
     };
   }
@@ -399,11 +454,11 @@ export async function nextRound(code) {
     currentLeadPlayerId: nextLead,
   };
 
-  // roundIdx = nextRoundNum - 1 (0-based)
   if (gameMode === "odiya") {
     updates.pyramid = buildPyramidFromPool(pool, nextRoundNum - 1, room.depth || 3);
     updates.machoba = null;
-  } else {
+    updates.neomoya = null;
+  } else if (gameMode === "machoba") {
     const count = room.machobaCount || 5;
     updates.machoba = {
       count,
@@ -411,6 +466,18 @@ export async function nextRound(code) {
       leadAnswers: null,
     };
     updates.pyramid = null;
+    updates.neomoya = null;
+  } else if (gameMode === "neomoya") {
+    // 너모야 점수 모드 (재미 모드는 nextRound 없음)
+    const count = room.neomoyaCount || 5;
+    updates.neomoya = {
+      subMode: "score",
+      count,
+      scenarios: buildNeomoyaScoreFromPool(pool, nextRoundNum - 1, count),
+      leadAnswers: null,
+    };
+    updates.pyramid = null;
+    updates.machoba = null;
   }
 
   await update(ref(db, `rooms/${code}`), updates);
@@ -427,6 +494,83 @@ export async function markReady(code, round, readyKey, playerId) {
 // 준비 상태 초기화 (라운드 넘어갈 때)
 export async function clearReadyState(code, round) {
   await remove(ref(db, `rooms/${code}/readyState/${round}`));
+}
+
+// ============================================
+// 너모야 점수 모드 - 마쵸바와 동일한 흐름
+// ============================================
+// 일반 플레이어 답변 (A/B 배열)
+export async function submitNeomoyaScoreVote(code, round, playerId, voteArray) {
+  await set(ref(db, `rooms/${code}/votes/${round}/${playerId}`), {
+    voteArray,
+    matchCount: null,
+  });
+}
+
+// 선플레이어 답변 (A/B 배열)
+export async function submitNeomoyaScoreLeadAnswers(code, leadAnswers) {
+  const snapshot = await get(ref(db, `rooms/${code}`));
+  if (!snapshot.exists()) return;
+  const room = snapshot.val();
+  if (!room.neomoya) return;
+
+  await update(ref(db, `rooms/${code}/neomoya`), {
+    leadAnswers,
+  });
+
+  await set(ref(db, `rooms/${code}/results/${room.currentRound}`), {
+    leadPlayerId: room.currentLeadPlayerId,
+    leadAnswers,
+    scenarios: room.neomoya.scenarios,
+  });
+}
+
+// 점수 모드 - 정답 공개 (마쵸바와 동일한 로직)
+export async function revealNeomoyaScoreResult(code, round) {
+  const snapshot = await get(ref(db, `rooms/${code}`));
+  if (!snapshot.exists()) return;
+  const room = snapshot.val();
+  const result = room.results?.[round];
+  if (!result || !result.leadAnswers) return;
+
+  const votes = room.votes?.[round] || {};
+  const updates = {};
+
+  for (const playerId in votes) {
+    const v = votes[playerId];
+    const matchCount = countMachobaMatches(v.voteArray || [], result.leadAnswers);
+    updates[`votes/${round}/${playerId}/matchCount`] = matchCount;
+
+    if (matchCount > 0) {
+      const player = room.players[playerId];
+      if (player) {
+        updates[`players/${playerId}/score`] = (player.score || 0) + matchCount;
+      }
+    }
+  }
+
+  updates[`results/${round}/revealed`] = true;
+  await update(ref(db, `rooms/${code}`), updates);
+}
+
+// ============================================
+// 너모야 재미 모드 - 동시 투표, 점수 없음
+// ============================================
+// 본인 답변 (A/B 배열) 제출
+export async function submitNeomoyaFunAnswers(code, playerId, answers) {
+  await set(ref(db, `rooms/${code}/neomoyaFunAnswers/${playerId}`), {
+    answers,
+    submittedAt: serverTimestamp(),
+  });
+}
+
+// 재미 모드 종료 (모두 제출 완료 시 호출 - 결과 단계로)
+export async function finishNeomoyaFun(code) {
+  const snapshot = await get(ref(db, `rooms/${code}`));
+  if (!snapshot.exists()) return;
+  await update(ref(db, `rooms/${code}`), {
+    status: "finished",
+  });
 }
 
 // ============================================

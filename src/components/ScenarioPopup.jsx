@@ -1,0 +1,207 @@
+import { useEffect, useState, useRef } from "react";
+import { colors, radius, shadow } from "../lib/theme";
+
+// 시나리오 팝업 (너모야 모드 전용)
+// scenario: { scenario, optionA, optionB }
+// onAnswer: ("A" | "B") => void
+export default function ScenarioPopup({
+  open,
+  currentStep,
+  totalSteps,
+  scenario,
+  onAnswer,
+}) {
+  const [animate, setAnimate] = useState(false);
+  const [locked, setLocked] = useState(false);
+  const lockTimerRef = useRef(null);
+
+  useEffect(() => {
+    if (open) {
+      setAnimate(false);
+      // 잠금은 setTimeout 으로만 풀림 (연타 방지)
+      const t = setTimeout(() => setAnimate(true), 10);
+      return () => clearTimeout(t);
+    }
+  }, [open, scenario?.scenario]);
+
+  useEffect(() => {
+    return () => {
+      if (lockTimerRef.current) clearTimeout(lockTimerRef.current);
+    };
+  }, []);
+
+  function handleAnswer(answer) {
+    if (locked) return;
+    setLocked(true);
+    onAnswer(answer);
+    lockTimerRef.current = setTimeout(() => setLocked(false), 1000);
+  }
+
+  if (!open || !scenario) return null;
+
+  return (
+    <>
+      {/* 배경 어두움 */}
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(0,0,0,0.45)",
+          backdropFilter: "blur(2px)",
+          opacity: animate ? 1 : 0,
+          transition: "opacity 0.25s",
+          zIndex: 1000,
+        }}
+      />
+
+      {/* 팝업 박스 */}
+      <div
+        style={{
+          position: "fixed",
+          top: "50%",
+          left: "50%",
+          transform: animate
+            ? "translate(-50%, -50%) scale(1)"
+            : "translate(-50%, -50%) scale(0.92)",
+          opacity: animate ? 1 : 0,
+          transition: "all 0.3s cubic-bezier(0.22, 1, 0.36, 1)",
+          width: "calc(100vw - 32px)",
+          maxWidth: 380,
+          maxHeight: "calc(100vh - 32px)",
+          overflowY: "auto",
+          background: `linear-gradient(180deg, ${colors.surface} 0%, ${colors.bg} 100%)`,
+          border: `2px solid ${colors.cardBorderDeep}`,
+          borderRadius: radius.xl,
+          padding: "22px 18px 18px",
+          boxShadow: "0 20px 40px rgba(0,0,0,0.18)",
+          zIndex: 1001,
+        }}
+      >
+        {/* 단계 표시 */}
+        <div style={{ display: "flex", justifyContent: "center", gap: 5, marginBottom: 10 }}>
+          {Array.from({ length: totalSteps }).map((_, i) => (
+            <div
+              key={i}
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: "50%",
+                background: i < currentStep ? colors.accentDeep : colors.border1,
+              }}
+            />
+          ))}
+        </div>
+
+        <div style={{ textAlign: "center", marginBottom: 14 }}>
+          <span style={{
+            fontSize: 10,
+            fontWeight: 700,
+            padding: "2px 10px",
+            borderRadius: 100,
+            background: colors.accentBg,
+            color: colors.accentDeep,
+            letterSpacing: 0.3,
+          }}>
+            {currentStep}단계 / {totalSteps}
+          </span>
+        </div>
+
+        {/* 시나리오 */}
+        <div
+          style={{
+            padding: "14px 14px",
+            borderRadius: radius.lg,
+            background: colors.bg,
+            border: `1px solid ${colors.border1}`,
+            marginBottom: 14,
+          }}
+        >
+          <p style={{
+            fontSize: 14,
+            fontWeight: 600,
+            color: colors.text1,
+            margin: 0,
+            lineHeight: 1.5,
+            wordBreak: "keep-all",
+            textAlign: "center",
+          }}>
+            {scenario.scenario}
+          </p>
+        </div>
+
+        {/* A/B 버튼 - 세로 */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <button
+            onClick={() => handleAnswer("A")}
+            disabled={locked}
+            style={{
+              padding: "14px 12px",
+              borderRadius: radius.lg,
+              background: `linear-gradient(180deg, ${colors.correctFillLight} 0%, ${colors.correctFill} 100%)`,
+              color: "#FFFFFF",
+              fontSize: 14,
+              fontWeight: 700,
+              border: "none",
+              boxShadow: "0 2px 0 #0F6E56, 0 3px 8px rgba(29,158,117,0.3)",
+              cursor: locked ? "default" : "pointer",
+              fontFamily: "inherit",
+              opacity: locked ? 0.6 : 1,
+              transition: "opacity 0.15s",
+              textAlign: "left",
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+            }}
+          >
+            <span style={{
+              fontSize: 12,
+              fontWeight: 800,
+              background: "rgba(255,255,255,0.25)",
+              padding: "2px 9px",
+              borderRadius: 100,
+              flexShrink: 0,
+            }}>
+              A
+            </span>
+            <span style={{ flex: 1, lineHeight: 1.3 }}>{scenario.optionA}</span>
+          </button>
+
+          <button
+            onClick={() => handleAnswer("B")}
+            disabled={locked}
+            style={{
+              padding: "14px 12px",
+              borderRadius: radius.lg,
+              background: `linear-gradient(180deg, ${colors.wrongFillLight} 0%, ${colors.wrongFill} 100%)`,
+              color: "#FFFFFF",
+              fontSize: 14,
+              fontWeight: 700,
+              border: "none",
+              boxShadow: "0 2px 0 #A32D2D, 0 3px 8px rgba(226,75,74,0.3)",
+              cursor: locked ? "default" : "pointer",
+              fontFamily: "inherit",
+              opacity: locked ? 0.6 : 1,
+              transition: "opacity 0.15s",
+              textAlign: "left",
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+            }}
+          >
+            <span style={{
+              fontSize: 12,
+              fontWeight: 800,
+              background: "rgba(255,255,255,0.25)",
+              padding: "2px 9px",
+              borderRadius: 100,
+              flexShrink: 0,
+            }}>
+              B
+            </span>
+            <span style={{ flex: 1, lineHeight: 1.3 }}>{scenario.optionB}</span>
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}

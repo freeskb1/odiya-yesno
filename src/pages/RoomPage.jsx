@@ -9,6 +9,9 @@ import {
   updateDepth,
   updateGameMode,
   updateMachobaCount,
+  updateNeomoyaSubMode,
+  updateNeomoyaCount,
+  updateRounds,
 } from "../lib/room";
 import { loadPlayer, clearPlayer } from "../lib/storage";
 import Avatar from "../components/Avatar";
@@ -100,6 +103,15 @@ export default function RoomPage() {
   async function handleSelectMachobaCount(c) {
     await updateMachobaCount(code, c);
   }
+  async function handleSelectNeomoyaSubMode(s) {
+    await updateNeomoyaSubMode(code, s);
+  }
+  async function handleSelectNeomoyaCount(c) {
+    await updateNeomoyaCount(code, c);
+  }
+  async function handleSelectRounds(r) {
+    await updateRounds(code, r);
+  }
 
   if (closed) {
     return <RoomClosed onHome={() => { clearPlayer(); navigate("/"); }} />;
@@ -132,6 +144,9 @@ export default function RoomPage() {
       onSelectDepth={handleSelectDepth}
       onSelectMode={handleSelectMode}
       onSelectMachobaCount={handleSelectMachobaCount}
+      onSelectNeomoyaSubMode={handleSelectNeomoyaSubMode}
+      onSelectNeomoyaCount={handleSelectNeomoyaCount}
+      onSelectRounds={handleSelectRounds}
     />
   ) : (
     <GuestWaitingRoom
@@ -151,11 +166,14 @@ function playerListFromRoom(room) {
 }
 
 // =================== 방장 대기실 ===================
-function HostWaitingRoom({ room, players, qrDataUrl, copied, onCopy, onStart, onClose, onSelectDepth, onSelectMode, onSelectMachobaCount }) {
+function HostWaitingRoom({ room, players, qrDataUrl, copied, onCopy, onStart, onClose, onSelectDepth, onSelectMode, onSelectMachobaCount, onSelectNeomoyaSubMode, onSelectNeomoyaCount, onSelectRounds }) {
   const canStart = players.length >= 2;
   const gameMode = room.gameMode || "odiya";
   const depth = room.depth || 3;
   const machobaCount = room.machobaCount || 5;
+  const neomoyaSubMode = room.neomoyaSubMode || "score";
+  const neomoyaCount = room.neomoyaCount || 5;
+  const rounds = room.rounds || 2;
 
   return (
     <div style={{ ...containerStyle, padding: "16px 16px 24px" }}>
@@ -256,13 +274,13 @@ function HostWaitingRoom({ room, players, qrDataUrl, copied, onCopy, onStart, on
         <p style={{ fontSize: 11, color: colors.text2, margin: "0 0 6px", fontWeight: 700 }}>
           🎮 게임 모드
         </p>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
           <ModeButton
             selected={gameMode === "odiya"}
             onClick={() => onSelectMode("odiya")}
             emoji="🗺️"
             title="오디야"
-            subtitle="피라미드 추리"
+            subtitle="피라미드"
           />
           <ModeButton
             selected={gameMode === "machoba"}
@@ -270,6 +288,13 @@ function HostWaitingRoom({ room, players, qrDataUrl, copied, onCopy, onStart, on
             emoji="🎯"
             title="마쵸바"
             subtitle="다중 퀴즈"
+          />
+          <ModeButton
+            selected={gameMode === "neomoya"}
+            onClick={() => onSelectMode("neomoya")}
+            emoji="🎭"
+            title="너모야"
+            subtitle="시나리오"
           />
         </div>
       </div>
@@ -326,6 +351,77 @@ function HostWaitingRoom({ room, players, qrDataUrl, copied, onCopy, onStart, on
           <p style={{ fontSize: 9, color: colors.text3, margin: "5px 0 0", textAlign: "center" }}>
             맞춘 개수만큼 점수가 올라가요
           </p>
+        </div>
+      )}
+
+      {gameMode === "neomoya" && (
+        <>
+          <div style={{ marginBottom: 10 }}>
+            <p style={{ fontSize: 11, color: colors.text2, margin: "0 0 6px", fontWeight: 700 }}>
+              🎭 너모야 유형
+            </p>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+              <OptionButton
+                selected={neomoyaSubMode === "score"}
+                onClick={() => onSelectNeomoyaSubMode("score")}
+                label="점수 모드"
+                subtitle="🏆 선플 답 맞추기"
+              />
+              <OptionButton
+                selected={neomoyaSubMode === "fun"}
+                onClick={() => onSelectNeomoyaSubMode("fun")}
+                label="재미 모드"
+                subtitle="✨ 통계로 보기"
+              />
+            </div>
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <p style={{ fontSize: 11, color: colors.text2, margin: "0 0 6px", fontWeight: 700 }}>
+              ❓ 시나리오 개수
+            </p>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+              {[
+                { value: 5, label: "5개", subtitle: "⚡ 짧게" },
+                { value: 10, label: "10개", subtitle: "⭐ 기본" },
+                { value: 15, label: "15개", subtitle: "🔥 길게" },
+              ].map((opt) => (
+                <OptionButton
+                  key={opt.value}
+                  selected={neomoyaCount === opt.value}
+                  onClick={() => onSelectNeomoyaCount(opt.value)}
+                  label={opt.label}
+                  subtitle={opt.subtitle}
+                />
+              ))}
+            </div>
+            <p style={{ fontSize: 9, color: colors.text3, margin: "5px 0 0", textAlign: "center" }}>
+              {neomoyaSubMode === "fun" ? "선플레이어 없이 모두 동시 투표 (4명+)" : "선플레이어 답 맞춘 개수만큼 점수"}
+            </p>
+          </div>
+        </>
+      )}
+
+      {/* 라운드 바퀴 (오디야/마쵸바/너모야 점수) */}
+      {(gameMode !== "neomoya" || neomoyaSubMode === "score") && (
+        <div style={{ marginBottom: 12 }}>
+          <p style={{ fontSize: 11, color: colors.text2, margin: "0 0 6px", fontWeight: 700 }}>
+            🔄 바퀴 수 (선플레이어 N번씩)
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+            {[
+              { value: 1, label: "1바퀴", subtitle: "⚡ 짧게" },
+              { value: 2, label: "2바퀴", subtitle: "⭐ 기본" },
+              { value: 3, label: "3바퀴", subtitle: "🔥 길게" },
+            ].map((opt) => (
+              <OptionButton
+                key={opt.value}
+                selected={rounds === opt.value}
+                onClick={() => onSelectRounds(opt.value)}
+                label={opt.label}
+                subtitle={opt.subtitle}
+              />
+            ))}
+          </div>
         </div>
       )}
 
@@ -423,6 +519,26 @@ function GuestWaitingRoom({ room, players, myPlayerId, onLeave }) {
   const gameMode = room.gameMode || "odiya";
   const depth = room.depth || 3;
   const machobaCount = room.machobaCount || 5;
+  const neomoyaSubMode = room.neomoyaSubMode || "score";
+  const neomoyaCount = room.neomoyaCount || 5;
+
+  function modeLabel() {
+    if (gameMode === "odiya") return `🗺️ 오디야 · ${depth}단계`;
+    if (gameMode === "machoba") return `🎯 마쵸바 · ${machobaCount}문제`;
+    if (gameMode === "neomoya") return `🎭 너모야 · ${neomoyaCount}개 (${neomoyaSubMode === "fun" ? "재미" : "점수"})`;
+    return "";
+  }
+
+  function modeDesc() {
+    if (gameMode === "odiya") return "선플레이어가 어떻게 답할지 예상해서 투표해요. 잘 맞출수록 점수가 올라가요!";
+    if (gameMode === "machoba") return `선플레이어를 향한 ${machobaCount}개 질문에 답을 예측해요. 맞춘 개수만큼 점수!`;
+    if (gameMode === "neomoya") {
+      if (neomoyaSubMode === "fun") return `${neomoyaCount}개 시나리오에 각자 답해요. 영혼의 단짝과 정반대 영혼이 누구일까요?`;
+      return `선플레이어가 ${neomoyaCount}개 시나리오에 어떻게 답할지 예측해요!`;
+    }
+    return "";
+  }
+
   return (
     <div style={{ ...containerStyle, padding: "20px 16px 24px" }}>
       <div style={{ textAlign: "center", marginBottom: 16 }}>
@@ -465,9 +581,7 @@ function GuestWaitingRoom({ room, players, myPlayerId, onLeave }) {
             fontWeight: 700,
           }}
         >
-          {gameMode === "odiya"
-            ? `🗺️ 오디야 · ${depth}단계 피라미드`
-            : `🎯 마쵸바 · ${machobaCount}문제`}
+          {modeLabel()}
         </span>
       </div>
 
@@ -487,9 +601,7 @@ function GuestWaitingRoom({ room, players, myPlayerId, onLeave }) {
           💡 게임 방법
         </p>
         <p style={{ fontSize: 11, color: colors.text2, margin: 0, lineHeight: 1.5 }}>
-          {gameMode === "odiya"
-            ? "선 플레이어가 어떻게 답할지 예상해서 투표해요. 잘 맞출수록 점수가 올라가요!"
-            : `선 플레이어를 향한 ${machobaCount}개 질문에 답을 예측해요. 맞춘 개수만큼 점수!`}
+          {modeDesc()}
         </p>
       </div>
 
