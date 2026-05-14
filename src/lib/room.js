@@ -182,6 +182,8 @@ function buildInitialUpdates(room, playerIds) {
       machoba: null,
       votes: null,
       results: null,
+      readyState: null,
+      neomoyaFunAnswers: null,
     };
   }
 
@@ -200,6 +202,8 @@ function buildInitialUpdates(room, playerIds) {
     neomoya: null,
     votes: null,
     results: null,
+    readyState: null,
+    neomoyaFunAnswers: null,
   };
 
   if (gameMode === "odiya") {
@@ -291,10 +295,13 @@ export async function returnToWaiting(code) {
     currentLeadPlayerId: null,
     pyramid: null,
     machoba: null,
+    neomoya: null,
     questionPool: null,
     votes: null,
     results: null,
     playerOrder: null,
+    readyState: null,
+    neomoyaFunAnswers: null,
   });
 }
 

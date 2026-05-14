@@ -15,7 +15,7 @@ import { colors, radius, shadow, containerStyle } from "../lib/theme";
 
 // 너모야 모드 게임 진행
 // subMode: "score" (점수, 선플레이어 있음) | "fun" (재미, 선플레이어 없음)
-export default function NeomoyaPlay({ room, code, myPlayerId, leadPlayer, players, onFinish }) {
+export default function NeomoyaPlay({ room, code, myPlayerId, leadPlayer, players, onFinish, isHost: isHostProp, onRestart, onReturnToWaiting }) {
   const subMode = room.neomoya?.subMode || "score";
   const scenarios = room.neomoya?.scenarios || [];
   const count = room.neomoya?.count || 5;
@@ -228,7 +228,18 @@ export default function NeomoyaPlay({ room, code, myPlayerId, leadPlayer, player
 
   // 재미 모드: 최종 결과
   if (subMode === "fun" && phase === "fun-result") {
-    return <FunResultView funAnswers={funAnswers} scenarios={scenarios} players={players} myPlayerId={myPlayerId} onFinish={onFinish} />;
+    return (
+      <FunResultView
+        funAnswers={funAnswers}
+        scenarios={scenarios}
+        players={players}
+        myPlayerId={myPlayerId}
+        isHost={isHostProp}
+        onFinish={onFinish}
+        onRestart={onRestart}
+        onReturnToWaiting={onReturnToWaiting}
+      />
+    );
   }
 
   // 점수 모드 - 선플레이어 대기
@@ -380,20 +391,26 @@ function IntroScreen({ subMode, round, totalRounds, leadPlayer, players, count }
 // ============================================
 function PopupBackground({ room, leadPlayer, subMode, step, total, isLead, children }) {
   return (
-    <div style={{ ...containerStyle, position: "relative", padding: "14px 12px 16px", justifyContent: "flex-start" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, fontSize: 11, color: colors.text3 }}>
-        <span style={{ fontWeight: 600 }}>
-          {subMode === "fun" ? "너모야 (재미)" : `Round ${room.currentRound} / ${room.totalRounds}`}
-        </span>
-        <span style={{ color: subMode === "fun" ? colors.accentText : (isLead ? colors.correctText : colors.accentText), fontWeight: 600 }}>
-          {subMode === "fun" ? "🎭 각자 답하기" : (isLead ? "🙈 내가 주인공" : `🙈 주인공: ${leadPlayer?.nickname || ""}`)}
-        </span>
+    <>
+      {/* 배경 (흐릿하게) */}
+      <div style={{ ...containerStyle, padding: "14px 12px 16px", justifyContent: "center", opacity: 0.4 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, fontSize: 11, color: colors.text3 }}>
+          <span style={{ fontWeight: 600 }}>
+            {subMode === "fun" ? "너모야 · 재미 모드" : `Round ${room.currentRound} / ${room.totalRounds}`}
+          </span>
+          <span style={{ color: subMode === "fun" ? colors.accentText : (isLead ? colors.correctText : colors.accentText), fontWeight: 600 }}>
+            {subMode === "fun" ? "🎭 각자 답하기" : (isLead ? "🙈 내가 주인공" : `🙈 주인공: ${leadPlayer?.nickname || ""}`)}
+          </span>
+        </div>
+        <p style={{ textAlign: "center", fontSize: 14, fontWeight: 600, color: colors.text2 }}>
+          {subMode === "fun"
+            ? "시나리오에 솔직하게 답하는 중..."
+            : (isLead ? "내 답변 입력 중..." : `${josa(leadPlayer?.nickname || "", "이/가")} 어떻게 답할지 예측 중...`)}
+        </p>
       </div>
-      <p style={{ fontSize: 11, color: colors.text3, textAlign: "center", margin: "8px 0 16px" }}>
-        {subMode === "fun" ? "솔직하게 답해주세요" : (isLead ? "내 답변 입력 중..." : `${josa(leadPlayer?.nickname || "", "이/가")} 어떻게 답할지 예측 중...`)}
-      </p>
+      {/* 팝업 (position: fixed 라 자체적으로 화면 중앙) */}
       {children}
-    </div>
+    </>
   );
 }
 
@@ -565,29 +582,36 @@ function RevealView({ room, players, leadPlayer, scenarios, leadAnswers, votes, 
 
   return (
     <div style={{ ...containerStyle, padding: "14px 12px 16px", justifyContent: "center" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, fontSize: 11, color: colors.text3 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, fontSize: 11, color: colors.text3 }}>
         <span style={{ fontWeight: 600 }}>Round {room.currentRound} / {room.totalRounds}</span>
-        <span style={{ color: isLead ? colors.correctText : colors.accentText, fontWeight: 600 }}>
-          🙈 {isLead ? "내가 주인공" : `주인공: ${leadPlayer?.nickname}`}
-        </span>
+        <span style={{ color: colors.accentText, fontWeight: 600 }}>🎉 정답 공개</span>
       </div>
 
-      <div style={{ textAlign: "center", marginBottom: 12 }}>
-        <div style={{ fontSize: 28, marginBottom: 4 }}>🎉</div>
-        <p style={{ fontSize: 15, fontWeight: 700, margin: 0, color: colors.text1 }}>
-          정답 공개!
+      {/* 상단 맥락 강조 - 누구 답인지 + 내 점수 */}
+      <div style={{
+        textAlign: "center", marginBottom: 14,
+        padding: "14px 16px", borderRadius: radius.lg,
+        background: colors.cardBg, border: `2px solid ${colors.cardBorderDeep}`,
+      }}>
+        <p style={{ fontSize: 13, fontWeight: 700, color: colors.accentDeep, margin: "0 0 2px" }}>
+          🙈 {isLead ? "내 답변" : `${leadPlayer?.nickname}의 답변`} 공개!
         </p>
-        {!isLead && (
-          <p style={{ fontSize: 12, color: colors.accentText, margin: "4px 0 0", fontWeight: 700 }}>
-            나는 {myMatchCount} / {count} 맞췄어요!
+        {isLead ? (
+          <p style={{ fontSize: 11, color: colors.text3, margin: "4px 0 0" }}>
+            친구들이 얼마나 맞췄을까요?
+          </p>
+        ) : (
+          <p style={{ fontSize: 20, fontWeight: 800, color: myMatchCount > count / 2 ? colors.correctText : colors.text2, margin: "6px 0 0" }}>
+            {myMatchCount} <span style={{ fontSize: 13, color: colors.text3, fontWeight: 600 }}>/ {count} 맞춤</span>
           </p>
         )}
       </div>
 
-      {/* 시나리오별 분포 */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+      {/* 시나리오별 - 위계 정리 */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
         {scenarios.map((s, i) => {
           const correctAns = leadAnswers[i];
+          const myAns = myVote?.voteArray?.[i];
           const aVoters = getVotersForScenario(i, "A");
           const bVoters = getVotersForScenario(i, "B");
           return (
@@ -596,6 +620,8 @@ function RevealView({ room, players, leadPlayer, scenarios, leadAnswers, votes, 
               index={i + 1}
               scenario={s}
               correctAns={correctAns}
+              myAns={myAns}
+              isLead={isLead}
               aVoters={aVoters}
               bVoters={bVoters}
               myPlayerId={myPlayerId}
@@ -613,7 +639,9 @@ function RevealView({ room, players, leadPlayer, scenarios, leadAnswers, votes, 
           {voterResults.map((v) => (
             <div key={v.playerId} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
               <Avatar nickname={v.player.nickname} colorIndex={players.findIndex((p) => p.id === v.playerId)} size={20} />
-              <span style={{ flex: 1, color: colors.text1 }}>{v.player.nickname}</span>
+              <span style={{ flex: 1, color: colors.text1, fontWeight: v.playerId === myPlayerId ? 700 : 400 }}>
+                {v.player.nickname}{v.playerId === myPlayerId && " (나)"}
+              </span>
               <span style={{ fontWeight: 700, color: colors.correctText }}>
                 +{v.matchCount || 0}점
               </span>
@@ -636,91 +664,98 @@ function RevealView({ room, players, leadPlayer, scenarios, leadAnswers, votes, 
   );
 }
 
-// 시나리오 1개 + 정답 + 양쪽 투표자
-function ScenarioRevealRow({ index, scenario, correctAns, aVoters, bVoters, myPlayerId }) {
+// 시나리오 1개 - 위계: 맞춤/틀림 색 띠 + 정답 강조 + 내 답 명확 + 친구 분포 작게
+function ScenarioRevealRow({ index, scenario, correctAns, myAns, isLead, aVoters, bVoters, myPlayerId }) {
   const [expanded, setExpanded] = useState(false);
   const truncated = scenario.scenario.length > 35;
   const displayText = !expanded && truncated ? scenario.scenario.substring(0, 35) + "..." : scenario.scenario;
 
+  const correctOptionText = correctAns === "A" ? scenario.optionA : scenario.optionB;
+  const correctColor = correctAns === "A" ? colors.correctFill : colors.wrongFill;
+  const isMyCorrect = !isLead && myAns === correctAns;
+  const myMissed = !isLead && myAns && myAns !== correctAns;
+
+  // 카드 왼쪽 색 띠: 맞춤=초록, 틀림=빨강, 선플레이어 본인=중립
+  const stripColor = isLead ? colors.cardBorderDeep : (isMyCorrect ? colors.correctFill : colors.wrongFill);
+
+  // 친구들 분포 (선플레이어/나 제외 다른 사람)
+  const correctVoters = correctAns === "A" ? aVoters : bVoters;
+  const otherVoters = correctVoters.filter((v) => v.id !== myPlayerId);
+
   return (
     <div style={{
-      padding: "10px 12px",
       borderRadius: radius.md,
       background: colors.surface,
       border: `1px solid ${colors.border1}`,
+      borderLeft: `4px solid ${stripColor}`,
+      overflow: "hidden",
     }}>
-      <div
-        onClick={() => truncated && setExpanded(!expanded)}
-        style={{ display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 8, cursor: truncated ? "pointer" : "default" }}
-      >
-        <span style={{ fontSize: 10, color: colors.text3, fontWeight: 700, minWidth: 14, marginTop: 2 }}>{index}</span>
-        <span style={{ fontSize: 12, color: colors.text1, flex: 1, wordBreak: "keep-all", fontWeight: 600, lineHeight: 1.4 }}>{displayText}</span>
-        <span style={{
-          fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 100,
-          background: correctAns === "A" ? colors.correctFill : colors.wrongFill, color: "#FFFFFF",
-          flexShrink: 0,
+      <div style={{ padding: "10px 12px" }}>
+        {/* 시나리오 텍스트 */}
+        <div
+          onClick={() => truncated && setExpanded(!expanded)}
+          style={{ display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 10, cursor: truncated ? "pointer" : "default" }}
+        >
+          <span style={{ fontSize: 10, color: colors.text3, fontWeight: 700, minWidth: 14, marginTop: 2 }}>{index}</span>
+          <span style={{ fontSize: 12, color: colors.text1, flex: 1, wordBreak: "keep-all", fontWeight: 600, lineHeight: 1.4 }}>{displayText}</span>
+        </div>
+
+        {/* 정답 - 강조 */}
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8,
+          padding: "8px 10px", borderRadius: radius.sm,
+          background: correctAns === "A" ? colors.correctBg : colors.wrongBg,
+          marginBottom: myAns || isLead ? 6 : 0,
         }}>
-          정답 {correctAns}
-        </span>
-      </div>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        <VoterLineNeomoya label="A" optionText={scenario.optionA} type="a" voters={aVoters} myPlayerId={myPlayerId} isCorrect={correctAns === "A"} />
-        <VoterLineNeomoya label="B" optionText={scenario.optionB} type="b" voters={bVoters} myPlayerId={myPlayerId} isCorrect={correctAns === "B"} />
-      </div>
-    </div>
-  );
-}
-
-function VoterLineNeomoya({ label, optionText, type, voters, myPlayerId, isCorrect }) {
-  const color = type === "a" ? colors.correctFill : colors.wrongFill;
-  const bg = isCorrect ? (type === "a" ? colors.correctBg : colors.wrongBg) : colors.surface2;
-  return (
-    <div style={{
-      display: "flex", alignItems: "flex-start", gap: 8,
-      padding: "6px 8px",
-      borderRadius: radius.sm,
-      background: bg,
-      border: isCorrect ? `1.5px solid ${color}` : "none",
-    }}>
-      <span style={{
-        fontSize: 10, fontWeight: 700,
-        padding: "2px 8px", borderRadius: 100,
-        background: color, color: "#FFFFFF",
-        minWidth: 22, textAlign: "center", flexShrink: 0,
-      }}>
-        {label}
-      </span>
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 3 }}>
-        <span style={{ fontSize: 10, color: colors.text2, fontWeight: 500, lineHeight: 1.3 }}>
-          {optionText}
-        </span>
-        {voters.length > 0 ? (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-            {voters.map((v, i) => {
-              const isMe = v.id === myPlayerId;
-              return (
-                <span key={v.id} style={{
-                  fontSize: 10,
-                  color: isMe ? color : colors.text3,
-                  fontWeight: isMe ? 700 : 500,
-                }}>
-                  {v.nickname}{isMe && " (나)"}{i < voters.length - 1 && <span style={{ opacity: 0.3, marginLeft: 4 }}>·</span>}
-                </span>
-              );
-            })}
-          </div>
-        ) : (
-          <span style={{ fontSize: 9, color: colors.text3, fontStyle: "italic" }}>
-            선택자 없음
+          <span style={{
+            fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 100,
+            background: correctColor, color: "#FFFFFF", flexShrink: 0,
+          }}>
+            {correctAns}
           </span>
+          <span style={{ fontSize: 12, color: colors.text1, fontWeight: 700, flex: 1, lineHeight: 1.3 }}>
+            {correctOptionText}
+          </span>
+          <span style={{ fontSize: 9, color: colors.text3, fontWeight: 600, flexShrink: 0 }}>
+            정답
+          </span>
+        </div>
+
+        {/* 내 답 결과 - 명확히 (선플레이어 제외) */}
+        {!isLead && myAns && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 6,
+            padding: "5px 10px", borderRadius: radius.sm,
+            background: isMyCorrect ? colors.correctBg : colors.surface2,
+          }}>
+            <span style={{ fontSize: 12, flexShrink: 0 }}>{isMyCorrect ? "✅" : "❌"}</span>
+            <span style={{ fontSize: 11, color: colors.text2, fontWeight: 600 }}>
+              내 예측: {myAns}
+            </span>
+            <span style={{
+              fontSize: 11, fontWeight: 700,
+              color: isMyCorrect ? colors.correctText : colors.text3,
+            }}>
+              {isMyCorrect ? "맞음!" : "틀림"}
+            </span>
+            {/* 친구 분포 - 작게 */}
+            {otherVoters.length > 0 && (
+              <span style={{ fontSize: 9, color: colors.text3, marginLeft: "auto", flexShrink: 0 }}>
+                {otherVoters.length}명도 맞춤
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* 선플레이어 본인 화면 - 누가 맞췄는지 작게 */}
+        {isLead && (
+          <div style={{ padding: "4px 10px", fontSize: 10, color: colors.text3 }}>
+            {correctVoters.length > 0
+              ? `${correctVoters.map((v) => v.nickname).join(", ")} 맞춤`
+              : "아무도 못 맞춤"}
+          </div>
         )}
       </div>
-      {isCorrect && voters.length > 0 && (
-        <span style={{ fontSize: 11, fontWeight: 700, color: type === "a" ? colors.correctText : colors.wrongFill, flexShrink: 0 }}>
-          +{voters.length}
-        </span>
-      )}
     </div>
   );
 }
@@ -748,7 +783,7 @@ function FunWaitingView({ submittedCount, totalCount }) {
 // ============================================
 // 재미 모드 - 최종 결과
 // ============================================
-function FunResultView({ funAnswers, scenarios, players, myPlayerId, onFinish }) {
+function FunResultView({ funAnswers, scenarios, players, myPlayerId, isHost, onFinish, onRestart, onReturnToWaiting }) {
   const stats = useMemo(() => calculateFunModeStats(funAnswers, scenarios), [funAnswers, scenarios]);
   const playerById = useMemo(() => {
     const m = {};
@@ -768,9 +803,8 @@ function FunResultView({ funAnswers, scenarios, players, myPlayerId, onFinish })
     <div style={{ ...containerStyle, padding: "16px 12px 16px", justifyContent: "center" }}>
       <div style={{ textAlign: "center", marginBottom: 16 }}>
         <div style={{ fontSize: 32, marginBottom: 4 }}>🎊</div>
-        <p style={{ fontSize: 11, color: colors.text3, letterSpacing: 1.2, margin: "0 0 2px", fontWeight: 600 }}>GAME OVER</p>
         <p style={{ fontSize: 17, fontWeight: 700, color: colors.text1, margin: 0 }}>
-          너모야 종료!
+          오늘의 너모야!
         </p>
       </div>
 
@@ -874,18 +908,63 @@ function FunResultView({ funAnswers, scenarios, players, myPlayerId, onFinish })
         </div>
       </div>
 
-      <button
-        onClick={onFinish}
-        style={{
-          padding: 13, borderRadius: radius.lg,
-          background: colors.accentBg, color: colors.accentDeep,
-          fontSize: 14, fontWeight: 700,
-          border: "none", boxShadow: "0 2px 4px rgba(83,74,183,0.15)",
-          cursor: "pointer", fontFamily: "inherit",
-        }}
-      >
-        🏠 홈으로
-      </button>
+      {isHost ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <button
+            onClick={onRestart}
+            style={{
+              padding: 13, borderRadius: radius.lg,
+              background: `linear-gradient(180deg, ${colors.correctFillLight} 0%, ${colors.correctFill} 100%)`,
+              color: "#FFFFFF", fontSize: 14, fontWeight: 700,
+              border: "none", boxShadow: shadow.button,
+              cursor: "pointer", fontFamily: "inherit",
+            }}
+          >
+            🔄 같은 멤버로 다시 한판
+          </button>
+          <button
+            onClick={onReturnToWaiting}
+            style={{
+              padding: 12, borderRadius: radius.lg,
+              background: colors.surface, color: colors.text1,
+              fontSize: 13, fontWeight: 600,
+              border: `1.5px solid ${colors.border2}`,
+              cursor: "pointer", fontFamily: "inherit",
+            }}
+          >
+            ⚙️ 모드 바꿔서 다시하기
+          </button>
+          <button
+            onClick={onFinish}
+            style={{
+              padding: 11, borderRadius: radius.lg,
+              background: "transparent", color: colors.text3,
+              fontSize: 12, fontWeight: 600,
+              border: "none", cursor: "pointer", fontFamily: "inherit",
+            }}
+          >
+            방 나가기
+          </button>
+        </div>
+      ) : (
+        <div style={{ textAlign: "center" }}>
+          <p style={{ fontSize: 12, color: colors.text3, margin: "0 0 10px" }}>
+            방장이 다음 게임을 준비하고 있어요
+          </p>
+          <button
+            onClick={onFinish}
+            style={{
+              padding: 11, borderRadius: radius.lg,
+              background: "transparent", color: colors.text3,
+              fontSize: 12, fontWeight: 600,
+              border: `1px solid ${colors.border1}`,
+              cursor: "pointer", fontFamily: "inherit",
+            }}
+          >
+            방 나가기
+          </button>
+        </div>
+      )}
     </div>
   );
 }

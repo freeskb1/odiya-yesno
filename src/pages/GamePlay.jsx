@@ -74,6 +74,9 @@ export default function GamePlay({ room, code, myPlayerId }) {
           myPlayerId={myPlayerId}
           leadPlayer={null}
           players={players}
+          isHost={isHost}
+          onRestart={handleRestart}
+          onReturnToWaiting={handleReturnToWaiting}
           onFinish={async () => {
             if (players.find((p) => p.id === myPlayerId)) {
               await leaveRoom(code, myPlayerId);
