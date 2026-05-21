@@ -78,7 +78,8 @@ export default function MachobaPlay({ room, code, myPlayerId, leadPlayer, player
     return "voting-popup";
   }
 
-  // 라운드 시작 인트로 (라운드 번호 바뀌면 무조건 인트로)
+  // 라운드 시작 인트로 (라운드 번호 바뀌면 intro phase 진입)
+  // setTimeout은 IntroScreen 컴포넌트 내부에서 처리 (stale closure 회피)
   const lastRoundRef = useRef(null);
   useEffect(() => {
     if (room.status !== "playing") return;
@@ -86,10 +87,8 @@ export default function MachobaPlay({ room, code, myPlayerId, leadPlayer, player
       lastRoundRef.current = room.currentRound;
       setPhase("intro");
       setMyStepAnswers([]);
-      const t = setTimeout(() => setPhase(computeNextPhase()), 2500);
-      return () => clearTimeout(t);
     }
-  }, [room.currentRound, room.status]); // eslint-disable-line
+  }, [room.currentRound, room.status]);
 
   // 통합 phase
   useEffect(() => {
@@ -195,7 +194,14 @@ export default function MachobaPlay({ room, code, myPlayerId, leadPlayer, player
 
   // ============ 렌더 ============
   if (phase === "intro") {
-    return <IntroScreen round={room.currentRound} totalRounds={room.totalRounds} leadPlayer={leadPlayer} players={players} count={count} />;
+    return <IntroScreen
+      round={room.currentRound}
+      totalRounds={room.totalRounds}
+      leadPlayer={leadPlayer}
+      players={players}
+      count={count}
+      onComplete={() => setPhase(computeNextPhase())}
+    />;
   }
 
   if (phase === "lead-waiting" && isLead) {
@@ -312,7 +318,14 @@ export default function MachobaPlay({ room, code, myPlayerId, leadPlayer, player
 // ============================================
 // 인트로
 // ============================================
-function IntroScreen({ round, totalRounds, leadPlayer, players, count }) {
+function IntroScreen({ round, totalRounds, leadPlayer, players, count, onComplete }) {
+  // 마운트 시 2.5초 후 onComplete 호출 (stale closure 문제 회피)
+  useEffect(() => {
+    if (!onComplete) return;
+    const t = setTimeout(() => onComplete(), 2500);
+    return () => clearTimeout(t);
+  }, [onComplete]);
+
   if (!leadPlayer) return null;
   return (
     <div style={{ ...containerStyle, alignItems: "center", justifyContent: "center", padding: 20 }}>

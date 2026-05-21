@@ -98,7 +98,7 @@ export default function NeomoyaPlay({ room, code, myPlayerId, leadPlayer, player
     return "voting-popup";
   }
 
-  // 라운드 시작 인트로
+  // 라운드 시작 인트로 (setTimeout은 IntroScreen 내부에서 처리, stale closure 회피)
   const lastRoundRef = useRef(null);
   useEffect(() => {
     if (room.status !== "playing" && room.status !== "finished") return;
@@ -111,26 +111,20 @@ export default function NeomoyaPlay({ room, code, myPlayerId, leadPlayer, player
         setPhase("fun-waiting");
         return;
       }
+      // 답변 안 했으면 인트로 진입 (한 번만)
       if (phase !== "intro" && phase !== "voting-popup" && phase !== "voting-confirm") {
         setPhase("intro");
+        setMyStepAnswers([]);
       }
-      setMyStepAnswers([]);
-      const t = setTimeout(() => {
-        setPhase((cur) => (cur === "intro" ? computeNextPhase() : cur));
-      }, 2500);
-      return () => clearTimeout(t);
+      return;
     }
-    // 점수 모드 - 라운드 진입(번호 바뀜) 시마다 인트로 강제
+    // 점수 모드 - 라운드 번호 바뀌면 인트로 강제
     if (lastRoundRef.current !== room.currentRound) {
       lastRoundRef.current = room.currentRound;
       setPhase("intro");
       setMyStepAnswers([]);
-      const t = setTimeout(() => {
-        setPhase((cur) => (cur === "intro" ? computeNextPhase() : cur));
-      }, 2500);
-      return () => clearTimeout(t);
     }
-  }, [room.currentRound, room.status, subMode]); // eslint-disable-line
+  }, [room.currentRound, room.status, subMode, myFunAnswer, phase]); // eslint-disable-line
 
   // 통합 phase
   useEffect(() => {
@@ -252,7 +246,15 @@ export default function NeomoyaPlay({ room, code, myPlayerId, leadPlayer, player
 
   // ============ 렌더 ============
   if (phase === "intro") {
-    return <IntroScreen subMode={subMode} round={room.currentRound} totalRounds={room.totalRounds} leadPlayer={leadPlayer} players={players} count={count} />;
+    return <IntroScreen
+      subMode={subMode}
+      round={room.currentRound}
+      totalRounds={room.totalRounds}
+      leadPlayer={leadPlayer}
+      players={players}
+      count={count}
+      onComplete={() => setPhase(computeNextPhase())}
+    />;
   }
 
   // 재미 모드: 답변 대기
@@ -495,7 +497,14 @@ export default function NeomoyaPlay({ room, code, myPlayerId, leadPlayer, player
 // ============================================
 // 인트로
 // ============================================
-function IntroScreen({ subMode, round, totalRounds, leadPlayer, players, count }) {
+function IntroScreen({ subMode, round, totalRounds, leadPlayer, players, count, onComplete }) {
+  // 마운트 시 2.5초 후 onComplete 호출 (stale closure 문제 회피)
+  useEffect(() => {
+    if (!onComplete) return;
+    const t = setTimeout(() => onComplete(), 2500);
+    return () => clearTimeout(t);
+  }, [onComplete]);
+
   return (
     <div style={{ ...containerStyle, justifyContent: "center", alignItems: "center", padding: "20px 12px" }}>
       <div style={{ textAlign: "center", marginBottom: 16 }}>
