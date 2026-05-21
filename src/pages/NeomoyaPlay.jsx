@@ -6,6 +6,7 @@ import {
   submitNeomoyaFunAnswers,
   finishNeomoyaFun,
   updateNeomoyaProgress,
+  updateLeadProgress,
   nextRound,
   markReady,
 } from "../lib/room";
@@ -151,6 +152,10 @@ export default function NeomoyaPlay({ room, code, myPlayerId, leadPlayer, player
     // 진행도 Firebase 업데이트
     const progressKey = subMode === "fun" ? "fun" : (isLead ? "scoreLead" : "scoreVote");
     updateNeomoyaProgress(code, room.currentRound, myPlayerId, progressKey, newAnswers.length);
+    // 점수 모드 선플레이어면 실시간 공유용 leadProgress 도 업데이트
+    if (subMode === "score" && isLead) {
+      updateLeadProgress(code, room.currentRound, newAnswers.length);
+    }
     if (newAnswers.length === count) {
       setPhase(isLead ? "lead-confirm" : "voting-confirm");
     }
@@ -364,30 +369,78 @@ export default function NeomoyaPlay({ room, code, myPlayerId, leadPlayer, player
       );
     }
 
-    // 모든 일반 플레이어 투표 완료 → 선플레이어 답변 중
+    // 모든 일반 플레이어 투표 완료 → 선플레이어 답변 중 (현재 시나리오 실시간 공유)
     const leadProgress = leadPlayer ? (progressData.scoreLead[leadPlayer.id] || 0) : 0;
     const leadDone = !!leadAnswers;
+    const leadCurrentStep = room.leadProgress?.[room.currentRound] ?? 0;
+    const currentScenario = !leadDone && scenarios[leadCurrentStep];
     return (
-      <div style={{ ...containerStyle, justifyContent: "center", alignItems: "center", padding: "0 12px" }}>
-        <div style={{ fontSize: 32, marginBottom: 8 }}>⏳</div>
-        <p style={{ fontSize: 14, fontWeight: 600, color: colors.text1, margin: "0 0 10px" }}>
-          모두 예측 완료!
-        </p>
-        <div style={{
-          padding: "10px 18px", borderRadius: radius.lg,
-          background: colors.surface, border: `1.5px solid ${colors.border1}`,
-          textAlign: "center",
-        }}>
-          <p style={{ fontSize: 11, color: colors.text3, margin: "0 0 4px" }}>
-            🙈 선플레이어 답변 중
+      <div style={{ ...containerStyle, padding: "14px 12px 16px", justifyContent: "center" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, fontSize: 11, color: colors.text3 }}>
+          <span style={{ fontWeight: 600 }}>Round {room.currentRound} / {room.totalRounds}</span>
+          <span style={{ color: colors.accentText, fontWeight: 600 }}>🙈 선플레이어: {leadPlayer?.nickname}</span>
+        </div>
+
+        <div style={{ textAlign: "center", marginBottom: 12 }}>
+          <p style={{ fontSize: 12, color: colors.accentDeep, fontWeight: 700, margin: 0 }}>
+            🙈 {leadPlayer?.nickname} 답변 중...
           </p>
-          <p style={{ fontSize: 14, fontWeight: 700, color: colors.text1, margin: 0 }}>
-            {leadPlayer?.nickname}{" "}
-            <span style={{ color: colors.accentText }}>
-              ({leadDone ? count : leadProgress} / {count})
-            </span>
+          <p style={{ fontSize: 10, color: colors.text3, margin: "2px 0 0" }}>
+            {leadDone ? `${count}/${count}` : `${Math.min(leadCurrentStep + 1, count)} / ${count}`} · 같은 시나리오를 함께 봐요
           </p>
         </div>
+
+        {/* 현재 선플레이어가 보는 시나리오 - 큰 카드 */}
+        {currentScenario && (
+          <div style={{
+            padding: "20px 16px", borderRadius: radius.lg,
+            background: colors.cardBg, border: `2px solid ${colors.cardBorderDeep}`,
+            marginBottom: 14, boxShadow: shadow.cardLift,
+          }}>
+            <p style={{ fontSize: 10, color: colors.accentText, fontWeight: 700, margin: "0 0 8px", textAlign: "center" }}>
+              지금 이 시나리오에 답하는 중
+            </p>
+            <p style={{ fontSize: 14, fontWeight: 700, color: colors.text1, margin: "0 0 14px", lineHeight: 1.4, wordBreak: "keep-all", textAlign: "center" }}>
+              {currentScenario.scenario}
+            </p>
+            {/* A/B 옵션 - 답은 가림 */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{
+                padding: "10px 12px", borderRadius: radius.md,
+                background: colors.surface, border: `1.5px solid ${colors.border2}`,
+                display: "flex", alignItems: "center", gap: 8,
+              }}>
+                <span style={{
+                  fontSize: 11, fontWeight: 800, padding: "2px 9px", borderRadius: 100,
+                  background: colors.accentBg, color: colors.accentDeep,
+                }}>A</span>
+                <span style={{ fontSize: 12, color: colors.text2, flex: 1, lineHeight: 1.3 }}>{currentScenario.optionA}</span>
+              </div>
+              <div style={{
+                padding: "10px 12px", borderRadius: radius.md,
+                background: colors.surface, border: `1.5px solid ${colors.border2}`,
+                display: "flex", alignItems: "center", gap: 8,
+              }}>
+                <span style={{
+                  fontSize: 11, fontWeight: 800, padding: "2px 9px", borderRadius: 100,
+                  background: colors.accentBg, color: colors.accentDeep,
+                }}>B</span>
+                <span style={{ fontSize: 12, color: colors.text2, flex: 1, lineHeight: 1.3 }}>{currentScenario.optionB}</span>
+              </div>
+            </div>
+            <p style={{ fontSize: 10, color: colors.text3, margin: "10px 0 0", textAlign: "center", fontStyle: "italic" }}>
+              🤫 선플레이어의 선택은 정답 공개 때 확인할 수 있어요
+            </p>
+          </div>
+        )}
+
+        {leadDone && (
+          <div style={{ padding: "16px", borderRadius: radius.lg, background: colors.surface, border: `1.5px solid ${colors.border1}`, textAlign: "center" }}>
+            <p style={{ fontSize: 14, fontWeight: 700, color: colors.text1, margin: 0 }}>
+              ✨ 답변 완료! 결과 정리 중...
+            </p>
+          </div>
+        )}
       </div>
     );
   }
@@ -461,7 +514,7 @@ function IntroScreen({ subMode, round, totalRounds, leadPlayer, players, count }
             {leadPlayer.nickname}
           </div>
           <div style={{ fontSize: 12, color: colors.accentText, fontWeight: 600 }}>
-            오늘의 주인공 🎯
+            오늘의 선플레이어 🎯
           </div>
         </div>
       )}
@@ -495,7 +548,7 @@ function PopupBackground({ room, leadPlayer, subMode, step, total, isLead, child
             {subMode === "fun" ? "너모야 · 재미 모드" : `Round ${room.currentRound} / ${room.totalRounds}`}
           </span>
           <span style={{ color: subMode === "fun" ? colors.accentText : (isLead ? colors.correctText : colors.accentText), fontWeight: 600 }}>
-            {subMode === "fun" ? "🎭 각자 답하기" : (isLead ? "🙈 내가 주인공" : `🙈 주인공: ${leadPlayer?.nickname || ""}`)}
+            {subMode === "fun" ? "🎭 각자 답하기" : (isLead ? "🙈 내가 선플레이어" : `🙈 선플레이어: ${leadPlayer?.nickname || ""}`)}
           </span>
         </div>
         <p style={{ textAlign: "center", fontSize: 14, fontWeight: 600, color: colors.text2 }}>
@@ -563,7 +616,7 @@ function ConfirmView({ round, totalRounds, leadPlayer, scenarios, myAnswers, isL
           {subMode === "fun" ? "너모야 (재미)" : `Round ${round} / ${totalRounds}`}
         </span>
         <span style={{ color: subMode === "fun" ? colors.accentText : (isLead ? colors.correctText : colors.accentText), fontWeight: 600 }}>
-          {subMode === "fun" ? "🎭 내 답변" : (isLead ? "🙈 내가 주인공" : `🙈 주인공: ${leadPlayer?.nickname}`)}
+          {subMode === "fun" ? "🎭 내 답변" : (isLead ? "🙈 내가 선플레이어" : `🙈 선플레이어: ${leadPlayer?.nickname}`)}
         </span>
       </div>
 
@@ -649,7 +702,7 @@ function ResultView({ room, leadPlayer, scenarios, leadAnswers, myAnswers, isLea
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, fontSize: 11, color: colors.text3 }}>
         <span style={{ fontWeight: 600 }}>Round {room.currentRound} / {room.totalRounds}</span>
         <span style={{ color: isLead ? colors.correctText : colors.accentText, fontWeight: 600 }}>
-          🙈 {isLead ? "내가 주인공" : `주인공: ${leadPlayer?.nickname}`}
+          🙈 {isLead ? "내가 선플레이어" : `선플레이어: ${leadPlayer?.nickname}`}
         </span>
       </div>
 

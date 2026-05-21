@@ -64,7 +64,7 @@ export default function HomePage() {
             letterSpacing: -2,
           }}
         >
-          오디야
+          너모야
         </div>
         <p style={{ fontSize: 12, color: colors.text3, margin: "8px 0 0" }}>
           친구를 얼마나 알고 있나요?

@@ -6,7 +6,6 @@ import {
   startGame,
   leaveRoom,
   closeRoom,
-  updateDepth,
   updateGameMode,
   updateMachobaCount,
   updateNeomoyaSubMode,
@@ -94,9 +93,6 @@ export default function RoomPage() {
       setTimeout(() => setCopied(false), 2000);
     } catch {}
   }
-  async function handleSelectDepth(d) {
-    await updateDepth(code, d);
-  }
   async function handleSelectMode(m) {
     await updateGameMode(code, m);
   }
@@ -141,7 +137,6 @@ export default function RoomPage() {
       onCopy={handleCopyCode}
       onStart={handleStartGame}
       onClose={handleCloseRoom}
-      onSelectDepth={handleSelectDepth}
       onSelectMode={handleSelectMode}
       onSelectMachobaCount={handleSelectMachobaCount}
       onSelectNeomoyaSubMode={handleSelectNeomoyaSubMode}
@@ -166,10 +161,9 @@ function playerListFromRoom(room) {
 }
 
 // =================== 방장 대기실 ===================
-function HostWaitingRoom({ room, players, qrDataUrl, copied, onCopy, onStart, onClose, onSelectDepth, onSelectMode, onSelectMachobaCount, onSelectNeomoyaSubMode, onSelectNeomoyaCount, onSelectRounds }) {
+function HostWaitingRoom({ room, players, qrDataUrl, copied, onCopy, onStart, onClose, onSelectMode, onSelectMachobaCount, onSelectNeomoyaSubMode, onSelectNeomoyaCount, onSelectRounds }) {
   const canStart = players.length >= 2;
-  const gameMode = room.gameMode || "odiya";
-  const depth = room.depth || 3;
+  const gameMode = room.gameMode || "machoba";
   const machobaCount = room.machobaCount || 5;
   const neomoyaSubMode = room.neomoyaSubMode || "score";
   const neomoyaCount = room.neomoyaCount || 5;
@@ -274,14 +268,7 @@ function HostWaitingRoom({ room, players, qrDataUrl, copied, onCopy, onStart, on
         <p style={{ fontSize: 11, color: colors.text2, margin: "0 0 6px", fontWeight: 700 }}>
           🎮 게임 모드
         </p>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
-          <ModeButton
-            selected={gameMode === "odiya"}
-            onClick={() => onSelectMode("odiya")}
-            emoji="🗺️"
-            title="오디야"
-            subtitle="피라미드"
-          />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
           <ModeButton
             selected={gameMode === "machoba"}
             onClick={() => onSelectMode("machoba")}
@@ -300,34 +287,6 @@ function HostWaitingRoom({ room, players, qrDataUrl, copied, onCopy, onStart, on
       </div>
 
       {/* 모드별 옵션 */}
-      {gameMode === "odiya" && (
-        <div style={{ marginBottom: 12 }}>
-          <p style={{ fontSize: 11, color: colors.text2, margin: "0 0 6px", fontWeight: 700 }}>
-            🎯 난이도
-          </p>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
-            {[
-              { value: 3, label: "3단계", subtitle: "⭐ 기본" },
-              { value: 4, label: "4단계", subtitle: "⭐⭐ 중급" },
-              { value: 5, label: "5단계", subtitle: "⭐⭐⭐ 상급" },
-            ].map((opt) => (
-              <OptionButton
-                key={opt.value}
-                selected={depth === opt.value}
-                onClick={() => onSelectDepth(opt.value)}
-                label={opt.label}
-                subtitle={opt.subtitle}
-              />
-            ))}
-          </div>
-          <p style={{ fontSize: 9, color: colors.text3, margin: "5px 0 0", textAlign: "center" }}>
-            {depth === 3 && "6장 / 도착지 6개"}
-            {depth === 4 && "10장 / 도착지 8개"}
-            {depth === 5 && "15장 / 가로 모드 권장"}
-          </p>
-        </div>
-      )}
-
       {gameMode === "machoba" && (
         <div style={{ marginBottom: 12 }}>
           <p style={{ fontSize: 11, color: colors.text2, margin: "0 0 6px", fontWeight: 700 }}>
@@ -401,7 +360,7 @@ function HostWaitingRoom({ room, players, qrDataUrl, copied, onCopy, onStart, on
         </>
       )}
 
-      {/* 라운드 바퀴 (오디야/마쵸바/너모야 점수) */}
+      {/* 라운드 바퀴 (마쵸바/너모야 점수) */}
       {(gameMode !== "neomoya" || neomoyaSubMode === "score") && (
         <div style={{ marginBottom: 12 }}>
           <p style={{ fontSize: 11, color: colors.text2, margin: "0 0 6px", fontWeight: 700 }}>
@@ -516,21 +475,18 @@ function OptionButton({ selected, onClick, label, subtitle }) {
 
 // =================== 참여자 대기실 ===================
 function GuestWaitingRoom({ room, players, myPlayerId, onLeave }) {
-  const gameMode = room.gameMode || "odiya";
-  const depth = room.depth || 3;
+  const gameMode = room.gameMode || "machoba";
   const machobaCount = room.machobaCount || 5;
   const neomoyaSubMode = room.neomoyaSubMode || "score";
   const neomoyaCount = room.neomoyaCount || 5;
 
   function modeLabel() {
-    if (gameMode === "odiya") return `🗺️ 오디야 · ${depth}단계`;
     if (gameMode === "machoba") return `🎯 마쵸바 · ${machobaCount}문제`;
     if (gameMode === "neomoya") return `🎭 너모야 · ${neomoyaCount}개 (${neomoyaSubMode === "fun" ? "재미" : "점수"})`;
     return "";
   }
 
   function modeDesc() {
-    if (gameMode === "odiya") return "선플레이어가 어떻게 답할지 예상해서 투표해요. 잘 맞출수록 점수가 올라가요!";
     if (gameMode === "machoba") return `선플레이어를 향한 ${machobaCount}개 질문에 답을 예측해요. 맞춘 개수만큼 점수!`;
     if (gameMode === "neomoya") {
       if (neomoyaSubMode === "fun") return `${neomoyaCount}개 시나리오에 각자 답해요. 영혼의 단짝과 정반대 영혼이 누구일까요?`;

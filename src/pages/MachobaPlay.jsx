@@ -3,6 +3,8 @@ import {
   submitMachobaVote,
   submitMachobaLeadAnswers,
   revealMachobaResult,
+  updateMachobaProgress,
+  updateLeadProgress,
   nextRound,
   markReady,
 } from "../lib/room";
@@ -38,6 +40,24 @@ export default function MachobaPlay({ room, code, myPlayerId, leadPlayer, player
   const nonLeadCount = players.length - 1;
   const submittedVotesCount = currentVotes.length;
   const currentResult = (room.results || {})[room.currentRound];
+
+  // 진행도 (몇 번째 문제까지 답했는지)
+  const machobaProg = useMemo(() => {
+    const prog = room.machobaProgress?.[room.currentRound] || {};
+    return { vote: prog.vote || {}, lead: prog.lead || {} };
+  }, [room.machobaProgress, room.currentRound]);
+
+  // 일반 플레이어 진행도 리스트 (선플레이어 제외, 제출 완료자는 count 고정)
+  function buildVoteProgressList() {
+    const submittedIds = currentVotes.map((v) => v.playerId);
+    return players
+      .filter((p) => p.id !== leadPlayer?.id)
+      .map((p) => {
+        const done = submittedIds.includes(p.id);
+        const cur = done ? count : (machobaProg.vote[p.id] || 0);
+        return { id: p.id, nickname: p.nickname, current: cur, total: count, done };
+      });
+  }
 
   // ============ Phase 전환 ============
   function computeNextPhase() {
@@ -87,6 +107,13 @@ export default function MachobaPlay({ room, code, myPlayerId, leadPlayer, player
     if (myStepAnswers.length >= count) return;
     const newAnswers = [...myStepAnswers, answer];
     setMyStepAnswers(newAnswers);
+    // 진행도 Firebase 기록
+    updateMachobaProgress(code, room.currentRound, myPlayerId, isLead ? "lead" : "vote", newAnswers.length);
+    // 선플레이어인 경우 현재 보고 있는 질문 인덱스를 leadProgress에 기록 (일반 플레이어 화면 공유용)
+    if (isLead) {
+      // newAnswers.length === count면 모두 끝, 그 외엔 newAnswers.length가 다음에 볼 인덱스
+      updateLeadProgress(code, room.currentRound, newAnswers.length);
+    }
     if (newAnswers.length === count) {
       // 최종 확인 단계로
       setPhase(isLead ? "lead-confirm" : "voting-confirm");
@@ -170,7 +197,7 @@ export default function MachobaPlay({ room, code, myPlayerId, leadPlayer, player
   }
 
   if (phase === "lead-waiting" && isLead) {
-    return <WaitingDark round={room.currentRound} totalRounds={room.totalRounds} votedCount={submittedVotesCount} totalCount={nonLeadCount} />;
+    return <WaitingDark round={room.currentRound} totalRounds={room.totalRounds} votedCount={submittedVotesCount} totalCount={nonLeadCount} progressList={buildVoteProgressList()} />;
   }
 
   // 일반 플레이어 / 선 플레이어 모두 동일한 팝업 인터페이스
@@ -211,6 +238,10 @@ export default function MachobaPlay({ room, code, myPlayerId, leadPlayer, player
   }
 
   if (phase === "voted-waiting" && !isLead) {
+    const allVotersSubmitted = submittedVotesCount >= nonLeadCount && nonLeadCount > 0;
+    const leadProgress = leadPlayer ? (machobaProg.lead[leadPlayer.id] || 0) : 0;
+    // 선플레이어가 현재 보고 있는 질문 인덱스 (실시간 공유용)
+    const leadCurrentStep = room.leadProgress?.[room.currentRound] ?? 0;
     return (
       <VotedWaiting
         round={room.currentRound}
@@ -218,6 +249,15 @@ export default function MachobaPlay({ room, code, myPlayerId, leadPlayer, player
         leadPlayer={leadPlayer}
         questions={questions}
         myAnswers={myStepAnswers}
+        allVotersSubmitted={allVotersSubmitted}
+        voteProgressList={buildVoteProgressList()}
+        submittedVotesCount={submittedVotesCount}
+        nonLeadCount={nonLeadCount}
+        leadProgress={leadProgress}
+        leadDone={!!leadAnswers}
+        leadCurrentStep={leadCurrentStep}
+        count={count}
+        myPlayerId={myPlayerId}
       />
     );
   }
@@ -323,35 +363,58 @@ function PopupBackground({ leadPlayer, round, totalRounds, isLead }) {
 // ============================================
 // 다크 대기 (선 플레이어용)
 // ============================================
-function WaitingDark({ round, totalRounds, votedCount, totalCount }) {
+function WaitingDark({ round, totalRounds, votedCount, totalCount, progressList }) {
   const percent = totalCount > 0 ? (votedCount / totalCount) * 100 : 0;
   return (
     <div style={{ ...containerStyle, background: "#1A1A1A", color: "#FFFFFF", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <p style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", margin: "0 0 24px", letterSpacing: 1.2 }}>
-        ROUND {round} / {totalRounds} · 당신은 선 플레이어
+      <p style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", margin: "0 0 20px", letterSpacing: 1.2 }}>
+        ROUND {round} / {totalRounds} · 당신은 선플레이어
       </p>
       <div style={{
-        width: 96, height: 96, borderRadius: "50%", background: "rgba(255,255,255,0.08)",
-        display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 24,
+        width: 80, height: 80, borderRadius: "50%", background: "rgba(255,255,255,0.08)",
+        display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 18,
       }}>
-        <span style={{ fontSize: 48 }}>🙈</span>
+        <span style={{ fontSize: 40 }}>🙈</span>
       </div>
-      <p style={{ fontSize: 18, fontWeight: 700, margin: "0 0 8px", textAlign: "center", lineHeight: 1.4 }}>
+      <p style={{ fontSize: 17, fontWeight: 700, margin: "0 0 6px", textAlign: "center", lineHeight: 1.4 }}>
         잠시만 기다려주세요!
       </p>
-      <p style={{ fontSize: 13, opacity: 0.6, textAlign: "center", lineHeight: 1.5, margin: "0 0 32px", maxWidth: 260 }}>
-        친구들이 당신의 답을 예측 중이에요<br />
-        모두 끝나면 당신 차례입니다
+      <p style={{ fontSize: 12, opacity: 0.6, textAlign: "center", lineHeight: 1.5, margin: "0 0 20px", maxWidth: 260 }}>
+        친구들이 당신의 답을 예측 중이에요
       </p>
-      <div style={{ width: "100%", maxWidth: 220, padding: "14px 16px", borderRadius: radius.md, background: "rgba(255,255,255,0.08)" }}>
+      <div style={{ width: "100%", maxWidth: 240, padding: "12px 14px", borderRadius: radius.md, background: "rgba(255,255,255,0.08)", marginBottom: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-          <span style={{ fontSize: 11, opacity: 0.7 }}>투표 진행</span>
+          <span style={{ fontSize: 11, opacity: 0.7 }}>완료</span>
           <span style={{ fontSize: 11, fontWeight: 700, opacity: 0.95 }}>{votedCount} / {totalCount}</span>
         </div>
         <div style={{ height: 4, borderRadius: 100, background: "rgba(255,255,255,0.15)", overflow: "hidden" }}>
           <div style={{ height: "100%", width: `${percent}%`, background: colors.correctFill, borderRadius: 100, transition: "width 0.5s" }} />
         </div>
       </div>
+
+      {/* 진행도 리스트 */}
+      {progressList && progressList.length > 0 && (
+        <div style={{ width: "100%", maxWidth: 280, display: "flex", flexDirection: "column", gap: 6 }}>
+          {progressList.map((p) => (
+            <div key={p.id} style={{
+              display: "flex", alignItems: "center", gap: 8,
+              padding: "7px 12px", borderRadius: 10,
+              background: p.done ? "rgba(43,186,140,0.2)" : "rgba(255,255,255,0.07)",
+            }}>
+              <span style={{ fontSize: 12, fontWeight: 600, flex: 1, color: "#FFFFFF" }}>
+                {p.nickname}
+              </span>
+              {p.done ? (
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#5FD9AE" }}>✓ 완료</span>
+              ) : (
+                <span style={{ fontSize: 11, fontWeight: 700, opacity: 0.7 }}>
+                  {p.current} / {p.total}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -457,47 +520,123 @@ function AnswerRow({ index, question, answer, leadAnswer, showResult }) {
 // ============================================
 // 투표 후 대기 (선 플레이어 답변 기다림)
 // ============================================
-function VotedWaiting({ round, totalRounds, leadPlayer, questions, myAnswers }) {
+function VotedWaiting({ round, totalRounds, leadPlayer, questions, myAnswers, allVotersSubmitted, voteProgressList, submittedVotesCount, nonLeadCount, leadProgress, leadDone, leadCurrentStep, count, myPlayerId }) {
   return (
     <div style={{ ...containerStyle, padding: "14px 12px 16px", justifyContent: "center" }}>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, fontSize: 11, color: colors.text3 }}>
         <span style={{ fontWeight: 600 }}>Round {round} / {totalRounds}</span>
-        <span style={{ color: colors.accentText, fontWeight: 600 }}>🙈 선: {leadPlayer?.nickname}</span>
+        <span style={{ color: colors.accentText, fontWeight: 600 }}>🙈 선플레이어: {leadPlayer?.nickname}</span>
       </div>
 
-      <div style={{ textAlign: "center", marginBottom: 14 }}>
-        <div style={{ fontSize: 32, marginBottom: 6 }}>⏳</div>
-        <p style={{ fontSize: 14, fontWeight: 700, margin: 0, color: colors.text1 }}>
-          {josa(leadPlayer?.nickname || "", "이/가")} 답변 중...
-        </p>
-        <p style={{ fontSize: 11, color: colors.text3, margin: "4px 0 0" }}>
-          내 예측이 얼마나 맞을지 두근두근
-        </p>
-      </div>
+      {!allVotersSubmitted ? (
+        <>
+          <div style={{ textAlign: "center", marginBottom: 14 }}>
+            <div style={{ fontSize: 32, marginBottom: 6 }}>⏳</div>
+            <p style={{ fontSize: 14, fontWeight: 700, margin: 0, color: colors.text1 }}>
+              예측 완료!
+            </p>
+            <p style={{ fontSize: 11, color: colors.text3, margin: "4px 0 0" }}>
+              다른 친구들이 예측 중이에요
+            </p>
+            <div style={{ display: "inline-block", marginTop: 8, padding: "4px 14px", borderRadius: 100, background: colors.accentBg, fontSize: 12, fontWeight: 700, color: colors.accentDeep }}>
+              완료 {submittedVotesCount} / {nonLeadCount}
+            </div>
+          </div>
+          {voteProgressList && voteProgressList.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {voteProgressList.map((p) => {
+                const isMe = p.id === myPlayerId;
+                return (
+                  <div key={p.id} style={{
+                    display: "flex", alignItems: "center", gap: 8,
+                    padding: "8px 12px", borderRadius: 10,
+                    background: p.done ? colors.correctBg : colors.surface,
+                    border: `1px solid ${p.done ? colors.correctFill : colors.border1}`,
+                  }}>
+                    <span style={{ fontSize: 12, fontWeight: isMe ? 700 : 600, flex: 1, color: colors.text1 }}>
+                      {p.nickname}
+                    </span>
+                    {p.done ? (
+                      <span style={{ fontSize: 11, fontWeight: 700, color: colors.correctText }}>✓ 완료</span>
+                    ) : (
+                      <span style={{ fontSize: 11, fontWeight: 700, color: colors.text3 }}>
+                        {p.current} / {p.total}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          {/* 선플레이어가 답하는 중 - 현재 질문 실시간 공유 */}
+          <div style={{ textAlign: "center", marginBottom: 12 }}>
+            <p style={{ fontSize: 12, color: colors.accentDeep, fontWeight: 700, margin: 0 }}>
+              🙈 {leadPlayer?.nickname} 답변 중...
+            </p>
+            <p style={{ fontSize: 10, color: colors.text3, margin: "2px 0 0" }}>
+              {leadDone ? `${count}/${count}` : `${Math.min(leadCurrentStep + 1, count)} / ${count}`} · 같은 질문을 함께 봐요
+            </p>
+          </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 12 }}>
-        {questions.map((q, i) => (
-          <MyGuessRow key={i} index={i + 1} question={q} answer={myAnswers[i]} />
-        ))}
-      </div>
+          {/* 선플레이어가 지금 보고 있는 질문 - 크게 강조 */}
+          {!leadDone && questions[leadCurrentStep] && (
+            <div style={{
+              padding: "20px 16px", borderRadius: radius.lg,
+              background: colors.cardBg, border: `2px solid ${colors.cardBorderDeep}`,
+              marginBottom: 14, textAlign: "center",
+              boxShadow: shadow.cardLift,
+            }}>
+              <p style={{ fontSize: 10, color: colors.accentText, fontWeight: 700, margin: "0 0 6px" }}>
+                지금 이 질문에 답하는 중
+              </p>
+              <p style={{ fontSize: 15, fontWeight: 700, color: colors.text1, margin: 0, lineHeight: 1.4, wordBreak: "keep-all" }}>
+                {questions[leadCurrentStep]}
+              </p>
+            </div>
+          )}
+
+          {/* 내가 예측한 답변 목록 (작게, 회상용) */}
+          <div style={{ marginTop: 8 }}>
+            <p style={{ fontSize: 10, color: colors.text3, margin: "0 0 6px", fontWeight: 600 }}>
+              💭 내 예측
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+              {questions.map((q, i) => (
+                <MyGuessRow
+                  key={i}
+                  index={i + 1}
+                  question={q}
+                  answer={myAnswers[i]}
+                  isCurrent={!leadDone && i === leadCurrentStep}
+                />
+              ))}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
 // 점선으로 내 예측 표시 (실제 결과 나오기 전 떨림)
-function MyGuessRow({ index, question, answer }) {
+function MyGuessRow({ index, question, answer, isCurrent }) {
   const isYes = answer === "YES";
   const color = isYes ? colors.correctFill : colors.wrongFill;
   return (
     <div style={{
       display: "flex", alignItems: "center",
       padding: "8px 10px", borderRadius: radius.md,
-      background: colors.surface,
-      border: `2px dashed ${color}`,
+      background: isCurrent ? colors.accentBg : colors.surface,
+      border: isCurrent ? `2px solid ${colors.accentText}` : `2px dashed ${color}`,
       gap: 8,
+      opacity: isCurrent ? 1 : 0.85,
     }}>
-      <span style={{ fontSize: 10, color: colors.text3, fontWeight: 600, width: 14 }}>{index}</span>
+      <span style={{ fontSize: 10, color: isCurrent ? colors.accentDeep : colors.text3, fontWeight: 700, width: 14 }}>{index}</span>
       <span style={{ fontSize: 11, color: colors.text2, flex: 1, wordBreak: "keep-all" }}>{question}</span>
+      {isCurrent && <span style={{ fontSize: 9, fontWeight: 700, color: colors.accentText }}>← 지금</span>}
       <span style={{ fontSize: 10, fontWeight: 700, color }}>내 예측: {answer}</span>
     </div>
   );
@@ -633,22 +772,6 @@ function RevealView({ room, players, leadPlayer, questions, leadAnswers, votes, 
               </span>
             </div>
           ))}
-        </div>
-      </div>
-
-      {/* 전체 누적 점수 */}
-      <div style={{ padding: "10px 12px", borderRadius: radius.md, background: colors.surface2, marginBottom: 12 }}>
-        <p style={{ fontSize: 11, color: colors.text3, margin: "0 0 6px", fontWeight: 600 }}>
-          누적 점수
-        </p>
-        <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", rowGap: 4, fontSize: 12 }}>
-          {[...players]
-            .sort((a, b) => (b.score || 0) - (a.score || 0))
-            .map((p) => (
-              <span key={p.id} style={{ marginRight: 8 }}>
-                {p.nickname} <strong style={{ fontWeight: 700, color: colors.correctText }}>{p.score || 0}</strong>
-              </span>
-            ))}
         </div>
       </div>
 

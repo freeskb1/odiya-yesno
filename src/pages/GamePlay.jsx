@@ -4,7 +4,6 @@ import { leaveRoom, restartGame, returnToWaiting } from "../lib/room";
 import { calculateSoulmate } from "../lib/game";
 import { clearPlayer } from "../lib/storage";
 import Avatar from "../components/Avatar";
-import OdiyaPlay from "./OdiyaPlay";
 import MachobaPlay from "./MachobaPlay";
 import NeomoyaPlay from "./NeomoyaPlay";
 import { colors, radius, shadow, containerStyle } from "../lib/theme";
@@ -37,7 +36,7 @@ export default function GamePlay({ room, code, myPlayerId }) {
         out.push({
           round: r,
           playerId: pid,
-          // 오디야: isCorrect (true/false) — 라운드 1개 = 1문제로 카운트
+          // 마쵸바 1라운드 = 1문제 카운트 (true/false) — 라운드 1개 = 1문제로 카운트
           // 마쵸바: matchCount (0~N), totalQuestions (라운드 내 총 문제 수)
           isCorrect: voteData.isCorrect === true,
           matchCount: typeof voteData.matchCount === "number" ? voteData.matchCount : null,
@@ -104,19 +103,7 @@ export default function GamePlay({ room, code, myPlayerId }) {
   }
 
   // 모드별 분기
-  const gameMode = room.gameMode || "odiya";
-  if (gameMode === "machoba") {
-    return (
-      <MachobaPlay
-        room={room}
-        code={code}
-        myPlayerId={myPlayerId}
-        leadPlayer={leadPlayer}
-        players={players}
-      />
-    );
-  }
-
+  const gameMode = room.gameMode || "machoba";
   if (gameMode === "neomoya") {
     return (
       <NeomoyaPlay
@@ -136,8 +123,9 @@ export default function GamePlay({ room, code, myPlayerId }) {
     );
   }
 
+  // 기본: 마쵸바
   return (
-    <OdiyaPlay
+    <MachobaPlay
       room={room}
       code={code}
       myPlayerId={myPlayerId}

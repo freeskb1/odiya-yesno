@@ -28,12 +28,6 @@ export function generateRoomCode() {
 // ============================================
 // 피라미드
 // ============================================
-export function getCardCountForDepth(depth) {
-  let total = 0;
-  for (let i = 1; i <= depth; i++) total += i;
-  return total;
-}
-
 // 배열 셔플 (Fisher-Yates - sort 보다 균등)
 function shuffle(arr) {
   const a = [...arr];
@@ -50,128 +44,55 @@ function shuffle(arr) {
 //
 // playerOrder: [pid1, pid2, pid1, pid2] (라운드별 선플레이어)
 // perRoundCount: 라운드당 필요 질문 수
-// usedQuestionsByPlayer: { [playerId]: [질문문자열, ...] } - 이전에 사용한 질문들
+// usedQuestionsRoom: [질문문자열, ...] - 방에서 이전에 사용한 질문들 (방 단위, 플레이어 무관)
 //
 // 반환:
-//   pool: [질문, 질문, ...] (라운드 순서대로 평탄화된 배열, 전체 길이 = totalRounds * perRoundCount)
-//   newUsedQuestions: { [playerId]: [...] } - 갱신된 사용 질문 (기존 + 이번 게임)
+//   pool: [질문, ...] (라운드 순서대로 평탄화, 길이 = totalRounds * perRoundCount)
+//   newUsedQuestions: [...] - 갱신된 방 사용 이력 (기존 + 이번 게임)
 //
-// 각 라운드의 perRoundCount 만큼 질문은:
-// 1. 그 라운드의 선플레이어가 이전 게임에서 받았던 질문 제외
-// 2. 그 라운드의 선플레이어가 이번 게임의 이전 라운드에서 받은 질문도 제외
-// 3. 남은 질문 중에서 무작위로 perRoundCount 개 선택
-//
-export function buildGameQuestionPool(playerOrder, perRoundCount, usedQuestionsByPlayer = {}) {
+// 방 단위 중복 방지: 한 게임 안에서 + 같은 방 리게임에서도 같은 질문은 누구 라운드든 다시 안 나옴
+export function buildGameQuestionPool(playerOrder, perRoundCount, usedQuestionsRoom = []) {
   const totalRounds = playerOrder.length;
+  const totalNeeded = totalRounds * perRoundCount;
   const pool = [];
 
-  // 누적 사용 질문 (기존 + 이번 게임 진행 중에 추가)
-  const cumulativeUsed = {};
-  for (const pid in usedQuestionsByPlayer) {
-    cumulativeUsed[pid] = new Set(usedQuestionsByPlayer[pid] || []);
-  }
-  // playerOrder 의 모든 플레이어에 대해 초기화
-  for (const pid of playerOrder) {
-    if (!cumulativeUsed[pid]) cumulativeUsed[pid] = new Set();
-  }
-
-  for (let r = 0; r < totalRounds; r++) {
-    const leadPid = playerOrder[r];
-    const usedSet = cumulativeUsed[leadPid];
-
-    // 사용 가능한 질문 = 전체 질문 - 이 사람이 받은 적 있는 질문
-    let available = QUESTIONS.filter((q) => !usedSet.has(q));
-
-    // 만약 부족하면 (이 사람이 거의 모든 질문을 다 받음) → 사용 이력 초기화 (안전장치)
-    if (available.length < perRoundCount) {
-      cumulativeUsed[leadPid] = new Set();
-      available = [...QUESTIONS];
+  // 방 전체 사용 이력 (배열일 수도, 구버전 객체일 수도 → 배열로 정규화)
+  let usedArr = [];
+  if (Array.isArray(usedQuestionsRoom)) {
+    usedArr = usedQuestionsRoom;
+  } else if (usedQuestionsRoom && typeof usedQuestionsRoom === "object") {
+    // 구버전 { playerId: [...] } 마이그레이션 - 전부 합침
+    const merged = new Set();
+    for (const pid in usedQuestionsRoom) {
+      (usedQuestionsRoom[pid] || []).forEach((q) => merged.add(q));
     }
+    usedArr = Array.from(merged);
+  }
+  const usedSet = new Set(usedArr);
 
-    // 셔플 후 perRoundCount 개 추출
-    const shuffled = shuffle(available);
-    const chosen = shuffled.slice(0, perRoundCount);
+  // 사용 가능한 질문 = 전체 - 방에서 쓴 적 있는 질문
+  let available = QUESTIONS.filter((q) => !usedSet.has(q));
 
-    // 풀에 추가
-    pool.push(...chosen);
-
-    // 누적 사용 질문에 기록
-    for (const q of chosen) {
-      cumulativeUsed[leadPid].add(q);
-    }
+  // 부족하면 이력 초기화 (질문 풀보다 많이 필요한 경우 안전장치)
+  if (available.length < totalNeeded) {
+    usedSet.clear();
+    available = [...QUESTIONS];
   }
 
-  // Set → Array 로 변환해서 반환 (Firebase 저장용)
-  const newUsedQuestions = {};
-  for (const pid in cumulativeUsed) {
-    newUsedQuestions[pid] = Array.from(cumulativeUsed[pid]);
-  }
+  // 한 번에 totalNeeded 개를 셔플해서 뽑고 라운드별로 분배
+  const shuffled = shuffle(available);
+  const chosen = shuffled.slice(0, totalNeeded);
+  pool.push(...chosen);
+
+  // 방 이력에 추가
+  const newUsedQuestions = [...usedSet, ...chosen];
 
   return { pool, newUsedQuestions };
-}
-
-// 라운드별 카드 추출
-export function buildPyramidFromPool(pool, roundIdx, depth) {
-  const cardCount = getCardCountForDepth(depth);
-  const start = roundIdx * cardCount;
-  const cards = pool.slice(start, start + cardCount);
-
-  const levels = [];
-  let idx = 0;
-  for (let lv = 1; lv <= depth; lv++) {
-    const levelCards = [];
-    for (let i = 0; i < lv; i++) {
-      levelCards.push(cards[idx++]);
-    }
-    levels.push(levelCards);
-  }
-  return {
-    depth,
-    levels,
-    answers: [],
-  };
 }
 
 export function buildMachobaFromPool(pool, roundIdx, count) {
   const start = roundIdx * count;
   return pool.slice(start, start + count);
-}
-
-// ============================================
-// 게임 진행 유틸 (피라미드)
-// ============================================
-export function getCardIndexAtLevel(answers, targetLevel) {
-  if (targetLevel === 1) return 0;
-  let idx = 0;
-  for (let i = 0; i < targetLevel - 1; i++) {
-    if (answers[i] && answers[i].answer === "NO") idx += 1;
-  }
-  return idx;
-}
-
-export function getCurrentQuestion(pyramid) {
-  const answers = pyramid.answers || [];
-  if (answers.length >= pyramid.depth) return null;
-
-  const targetLevel = answers.length + 1;
-  const cardIdx = getCardIndexAtLevel(answers, targetLevel);
-  return {
-    level: targetLevel,
-    cardIndex: cardIdx,
-    question: pyramid.levels[targetLevel - 1][cardIdx],
-  };
-}
-
-export function getDestination(answers) {
-  if (!answers || answers.length === 0) return null;
-  const depth = answers.length;
-  const finalIdx = getCardIndexAtLevel(answers, depth);
-  const finalAns = answers[depth - 1].answer;
-  return `${finalIdx}${finalAns === "Y" || finalAns === "YES" ? "Y" : "N"}`;
-}
-
-export function getAnswerSequence(answers) {
-  return (answers || []).map((a) => a.answer);
 }
 
 // ============================================
@@ -198,7 +119,7 @@ export function buildLeadPlayerOrder(playerIds, rounds = 2) {
 // ============================================
 // 반환: {
 //   ranking: [{ playerId, correctCount, total, percent }, ...] (점수 내림차순)
-//   totalCount: 합산 분모 (오디야: 라운드 수, 마쵸바: 총 문제 수)
+//   totalCount: 합산 분모
 //   worst: { ... } | null (4명 이상일 때만)
 // }
 export function calculateSoulmate(myPlayerId, myLeadRounds, allVotes) {
@@ -215,7 +136,7 @@ export function calculateSoulmate(myPlayerId, myLeadRounds, allVotes) {
 
   // 플레이어별 합산
   // 마쵸바: matchCount 누적 / 전체 문제 수 누적
-  // 오디야: isCorrect true 횟수 / 라운드 수
+  // 마쵸바 1라운드 = 1문제 카운트 true 횟수 / 라운드 수
   const playerStats = {}; // { pid: { correct, total } }
 
   if (isMachoba) {
@@ -255,7 +176,7 @@ export function calculateSoulmate(myPlayerId, myLeadRounds, allVotes) {
     return { ranking, totalCount, worst };
   }
 
-  // 오디야 모드
+  // 마쵸바 모드
   for (const v of relevant) {
     if (!playerStats[v.playerId]) {
       playerStats[v.playerId] = { correct: 0, total: myLeadRounds.length };
@@ -326,41 +247,35 @@ export function getPlayerIndex(players, playerId) {
 // playerOrder, perRoundCount: 마쵸바와 동일
 // usedScenariosByPlayer: { [playerId]: [scenario문자열, ...] }
 // 반환: { pool: [{scenario, optionA, optionB}, ...], newUsed: {...} }
-export function buildNeomoyaScorePool(playerOrder, perRoundCount, usedScenariosByPlayer = {}) {
+export function buildNeomoyaScorePool(playerOrder, perRoundCount, usedScenariosRoom = []) {
   const totalRounds = playerOrder.length;
+  const totalNeeded = totalRounds * perRoundCount;
   const pool = [];
 
-  const cumulativeUsed = {};
-  for (const pid in usedScenariosByPlayer) {
-    cumulativeUsed[pid] = new Set(usedScenariosByPlayer[pid] || []);
-  }
-  for (const pid of playerOrder) {
-    if (!cumulativeUsed[pid]) cumulativeUsed[pid] = new Set();
-  }
-
-  for (let r = 0; r < totalRounds; r++) {
-    const leadPid = playerOrder[r];
-    const usedSet = cumulativeUsed[leadPid];
-
-    let available = SCENARIOS.filter((s) => !usedSet.has(s.scenario));
-    if (available.length < perRoundCount) {
-      cumulativeUsed[leadPid] = new Set();
-      available = [...SCENARIOS];
+  // 방 단위 이력 정규화 (배열 / 구버전 객체 모두 처리)
+  let usedArr = [];
+  if (Array.isArray(usedScenariosRoom)) {
+    usedArr = usedScenariosRoom;
+  } else if (usedScenariosRoom && typeof usedScenariosRoom === "object") {
+    const merged = new Set();
+    for (const pid in usedScenariosRoom) {
+      (usedScenariosRoom[pid] || []).forEach((s) => merged.add(s));
     }
+    usedArr = Array.from(merged);
+  }
+  const usedSet = new Set(usedArr);
 
-    const shuffled = shuffle(available);
-    const chosen = shuffled.slice(0, perRoundCount);
-    pool.push(...chosen);
-
-    for (const s of chosen) {
-      cumulativeUsed[leadPid].add(s.scenario);
-    }
+  let available = SCENARIOS.filter((s) => !usedSet.has(s.scenario));
+  if (available.length < totalNeeded) {
+    usedSet.clear();
+    available = [...SCENARIOS];
   }
 
-  const newUsed = {};
-  for (const pid in cumulativeUsed) {
-    newUsed[pid] = Array.from(cumulativeUsed[pid]);
-  }
+  const shuffled = shuffle(available);
+  const chosen = shuffled.slice(0, totalNeeded);
+  pool.push(...chosen);
+
+  const newUsed = [...usedSet, ...chosen.map((s) => s.scenario)];
 
   return { pool, newUsed };
 }
